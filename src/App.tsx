@@ -17,7 +17,6 @@ function App() {
               <Route element={<PublicRoute />}>
                 <Route path="/login" element={<AuthPage />} />
               </Route>
-
               {/* Protected routes - redirect to login if not logged in */}
               <Route element={<ProtectedRoute />}>
                 <Route path="/" element={<ChatDashboard />} />
