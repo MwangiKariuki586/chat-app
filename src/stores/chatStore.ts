@@ -1,0 +1,603 @@
+import { create } from 'zustand';
+import type { Message, Conversation } from '@/types';
+import { supabase } from '@/lib/supabase';
+
+interface MessageState {
+    // Messages grouped by conversation ID
+    messagesByConversation: Record<string, Message[]>;
+
+    // Loading states
+    isLoading: boolean;
+    isSending: boolean;
+
+    // Actions
+    setMessages: (conversationId: string, messages: Message[]) => void;
+    addMessage: (message: Message) => void;
+    addOptimisticMessage: (conversationId: string, content: string, senderId: string, tempId: string) => void;
+    confirmMessage: (tempId: string, confirmedMessage: Message) => void;
+    removeMessage: (conversationId: string, messageId: string) => void;
+
+    // API actions
+    fetchMessages: (conversationId: string) => Promise<void>;
+    sendMessage: (conversationId: string, content: string) => Promise<{ error: Error | null }>;
+}
+
+export const useMessageStore = create<MessageState>((set, get) => ({
+    messagesByConversation: {},
+    isLoading: false,
+    isSending: false,
+
+    // Set all messages for a conversation
+    setMessages: (conversationId, messages) => {
+        set((state) => ({
+            messagesByConversation: {
+                ...state.messagesByConversation,
+                [conversationId]: messages,
+            },
+        }));
+    },
+
+    // Add a single message (from realtime)
+    addMessage: (message) => {
+        set((state) => {
+            const conversationId = message.conversation_id;
+            const existing = state.messagesByConversation[conversationId] || [];
+
+            // Prevent duplicates
+            if (existing.some((m) => m.id === message.id)) {
+                return state;
+            }
+
+            return {
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: [...existing, message],
+                },
+            };
+        });
+    },
+
+    // Add optimistic message (shows immediately before server confirms)
+    addOptimisticMessage: (conversationId, content, senderId, tempId) => {
+        const optimisticMessage: Message = {
+            id: tempId,
+            conversation_id: conversationId,
+            sender_id: senderId,
+            content,
+            created_at: new Date().toISOString(),
+        };
+
+        set((state) => {
+            const existing = state.messagesByConversation[conversationId] || [];
+            return {
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: [...existing, optimisticMessage],
+                },
+            };
+        });
+    },
+
+    // Replace optimistic message with confirmed one
+    confirmMessage: (tempId, confirmedMessage) => {
+        set((state) => {
+            const conversationId = confirmedMessage.conversation_id;
+            const existing = state.messagesByConversation[conversationId] || [];
+
+            return {
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: existing.map((m) =>
+                        m.id === tempId ? confirmedMessage : m
+                    ),
+                },
+            };
+        });
+    },
+
+    // Remove a message
+    removeMessage: (conversationId, messageId) => {
+        set((state) => {
+            const existing = state.messagesByConversation[conversationId] || [];
+            return {
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: existing.filter((m) => m.id !== messageId),
+                },
+            };
+        });
+    },
+
+    // Fetch messages from database (filtered by user's visible_from for fresh start)
+    fetchMessages: async (conversationId) => {
+        set({ isLoading: true });
+
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Not authenticated');
+
+            // Get user's visible_from for this conversation
+            const { data: participation, error: partError } = await supabase
+                .from('conversation_participants')
+                .select('visible_from, left_at')
+                .eq('conversation_id', conversationId)
+                .eq('user_id', user.id)
+                .single();
+
+            console.log('📧 fetchMessages - participation data:', participation);
+            console.log('📧 fetchMessages - participation error:', partError);
+
+            // Build query
+            let query = supabase
+                .from('messages')
+                .select(`
+                    *,
+                    sender:users!sender_id(id, name, email, avatar_url)
+                `)
+                .eq('conversation_id', conversationId);
+
+            // Filter by visible_from if set (for fresh start after rejoin)
+            if (participation?.visible_from) {
+                console.log('📧 Filtering messages by visible_from:', participation.visible_from);
+                query = query.gte('created_at', participation.visible_from);
+            } else {
+                console.log('📧 No visible_from filter - showing all messages');
+            }
+
+            const { data, error } = await query
+                .order('created_at', { ascending: true })
+                .limit(50);
+
+            if (error) throw error;
+
+            console.log('📧 Fetched messages count:', data?.length);
+
+            set((state) => ({
+                isLoading: false,
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: data || [],
+                },
+            }));
+        } catch (error) {
+            console.error('Error fetching messages:', error);
+            set({ isLoading: false });
+        }
+    },
+
+    // Send a new message
+    sendMessage: async (conversationId, content) => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return { error: new Error('Not authenticated') };
+
+        // Generate temp ID for optimistic update
+        const tempId = `temp-${Date.now()}`;
+
+        // Add optimistic message immediately
+        get().addOptimisticMessage(conversationId, content, user.id, tempId);
+        set({ isSending: true });
+
+        try {
+            const { data, error } = await supabase
+                .from('messages')
+                .insert({
+                    conversation_id: conversationId,
+                    sender_id: user.id,
+                    content,
+                })
+                .select(`
+          *,
+          sender:users!sender_id(id, name, email, avatar_url)
+        `)
+                .single();
+
+            if (error) {
+                // Remove optimistic message on error
+                get().removeMessage(conversationId, tempId);
+                throw error;
+            }
+
+            // Replace optimistic message with confirmed one
+            // Note: Realtime will also deliver this, so we prevent duplicates in addMessage
+            get().confirmMessage(tempId, data);
+
+            set({ isSending: false });
+            return { error: null };
+        } catch (error) {
+            set({ isSending: false });
+            return { error: error as Error };
+        }
+    },
+}));
+
+// =============================================
+// Conversation Store
+// =============================================
+
+interface ConversationState {
+    conversations: Conversation[];
+    activeConversationId: string | null;
+    isLoading: boolean;
+    unreadCounts: Record<string, number>; // Conversation ID -> unread count
+
+    setConversations: (conversations: Conversation[]) => void;
+    setActiveConversation: (id: string | null) => void;
+    fetchConversations: () => Promise<void>;
+    createConversation: (participantIds: string[], name?: string) => Promise<{ data: Conversation | null; error: Error | null }>;
+    getOrCreateDirectConversation: (otherUserId: string) => Promise<{ data: Conversation | null; error: Error | null }>;
+    deleteConversation: (conversationId: string) => Promise<{ error: Error | null }>;
+
+    // Realtime actions
+    addConversation: (conversation: Conversation) => void;
+    removeConversation: (conversationId: string) => void;
+    updateLastMessage: (conversationId: string, message: Message) => void;
+    incrementUnreadCount: (conversationId: string) => void;
+    resetUnreadCount: (conversationId: string) => void;
+}
+
+export const useConversationStore = create<ConversationState>((set, get) => ({
+    conversations: [],
+    activeConversationId: null,
+    isLoading: false,
+    unreadCounts: {},
+
+    setConversations: (conversations) => set({ conversations }),
+
+    setActiveConversation: (id) => set({ activeConversationId: id }),
+
+    // Add a new conversation (from realtime)
+    addConversation: (conversation) => {
+        set((state) => {
+            // Prevent duplicates
+            if (state.conversations.some((c) => c.id === conversation.id)) {
+                return state;
+            }
+            // Add to the beginning of the list
+            return {
+                conversations: [conversation, ...state.conversations],
+            };
+        });
+    },
+
+    // Remove a conversation from local state
+    removeConversation: (conversationId) => {
+        set((state) => ({
+            conversations: state.conversations.filter((c) => c.id !== conversationId),
+            // Also clear unread count
+            unreadCounts: Object.fromEntries(
+                Object.entries(state.unreadCounts).filter(([id]) => id !== conversationId)
+            ),
+            // Clear active conversation if it was deleted
+            activeConversationId: state.activeConversationId === conversationId
+                ? null
+                : state.activeConversationId,
+        }));
+    },
+
+    // Update last message for a conversation
+    updateLastMessage: (conversationId, message) => {
+        set((state) => ({
+            conversations: state.conversations.map((conv) =>
+                conv.id === conversationId
+                    ? { ...conv, last_message: message, updated_at: message.created_at }
+                    : conv
+            ).sort((a, b) => {
+                // Sort by updated_at descending (most recent first)
+                const aTime = a.last_message?.created_at || a.created_at;
+                const bTime = b.last_message?.created_at || b.created_at;
+                return new Date(bTime).getTime() - new Date(aTime).getTime();
+            }),
+        }));
+    },
+
+    // Increment unread count for a conversation
+    incrementUnreadCount: (conversationId) => {
+        set((state) => ({
+            unreadCounts: {
+                ...state.unreadCounts,
+                [conversationId]: (state.unreadCounts[conversationId] || 0) + 1,
+            },
+        }));
+    },
+
+    // Reset unread count when conversation is opened
+    resetUnreadCount: (conversationId) => {
+        set((state) => ({
+            unreadCounts: {
+                ...state.unreadCounts,
+                [conversationId]: 0,
+            },
+        }));
+    },
+
+    // Delete/Leave a conversation (soft delete via left_at timestamp)
+    // The conversation remains for other participants, and user can rejoin later
+    deleteConversation: async (conversationId) => {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Not authenticated');
+
+            // Set left_at timestamp (soft delete)
+            // This hides the conversation from this user's list
+            const { error } = await supabase
+                .from('conversation_participants')
+                .update({ left_at: new Date().toISOString() })
+                .eq('conversation_id', conversationId)
+                .eq('user_id', user.id);
+
+            if (error) throw error;
+
+            // Remove from local state
+            get().removeConversation(conversationId);
+
+            return { error: null };
+        } catch (error) {
+            console.error('Error leaving conversation:', error);
+            return { error: error as Error };
+        }
+    },
+
+
+    // Fetch all conversations for current user (where they haven't left)
+    fetchConversations: async () => {
+        set({ isLoading: true });
+
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Not authenticated');
+
+            // First get conversation IDs where user is an ACTIVE participant (left_at is null)
+            const { data: activeParticipations, error: partError } = await supabase
+                .from('conversation_participants')
+                .select('conversation_id')
+                .eq('user_id', user.id)
+                .is('left_at', null);
+
+            if (partError) throw partError;
+
+            const activeConvIds = activeParticipations?.map(p => p.conversation_id) || [];
+
+            if (activeConvIds.length === 0) {
+                set({ conversations: [], isLoading: false });
+                return;
+            }
+
+            // Get conversations with participants
+            const { data: conversations, error } = await supabase
+                .from('conversations')
+                .select(`
+                    *,
+                    participants:conversation_participants(
+                        user_id,
+                        left_at,
+                        visible_from,
+                        user:users(id, name, email, avatar_url)
+                    )
+                `)
+                .in('id', activeConvIds)
+                .order('updated_at', { ascending: false });
+
+            if (error) throw error;
+
+            // Fetch last message for each conversation
+            const conversationsWithLastMessage = await Promise.all(
+                (conversations || []).map(async (conv) => {
+                    const { data: messages } = await supabase
+                        .from('messages')
+                        .select(`
+                            *,
+                            sender:users!sender_id(id, name, email, avatar_url)
+                        `)
+                        .eq('conversation_id', conv.id)
+                        .order('created_at', { ascending: false })
+                        .limit(1);
+
+                    return {
+                        ...conv,
+                        last_message: messages?.[0] || null,
+                    };
+                })
+            );
+
+            set({ conversations: conversationsWithLastMessage, isLoading: false });
+        } catch (error) {
+            console.error('Error fetching conversations:', error);
+            set({ isLoading: false });
+        }
+    },
+
+
+    // Create a new conversation
+    createConversation: async (participantIds, name) => {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Not authenticated');
+
+            // Generate UUID client-side to avoid any SELECT after INSERT
+            const conversationId = crypto.randomUUID();
+
+            // Step 1: Create conversation WITHOUT any .select()
+            const { error: convError } = await supabase
+                .from('conversations')
+                .insert({
+                    id: conversationId,
+                    name: name || null,
+                    is_group: participantIds.length > 1,
+                });
+
+            if (convError) throw convError;
+
+            // Step 2: Add all participants (including current user) IMMEDIATELY
+            const allParticipants = [...new Set([user.id, ...participantIds])];
+            const { error: partError } = await supabase
+                .from('conversation_participants')
+                .insert(
+                    allParticipants.map((userId) => ({
+                        conversation_id: conversationId,
+                        user_id: userId,
+                    }))
+                );
+
+            if (partError) throw partError;
+
+            // Step 3: Fetch the full conversation with participants (single query)
+            const { data: conversation, error: fetchError } = await supabase
+                .from('conversations')
+                .select(`
+                    *,
+                    participants:conversation_participants(
+                        user_id,
+                        user:users(id, name, email, avatar_url)
+                    )
+                `)
+                .eq('id', conversationId)
+                .single();
+
+            if (fetchError) throw fetchError;
+
+            // Add to local state directly instead of refetching all
+            if (conversation) {
+                get().addConversation(conversation as Conversation);
+            }
+
+            return { data: conversation, error: null };
+        } catch (error) {
+            return { data: null, error: error as Error };
+        }
+    },
+
+    // Get or create a 1:1 conversation with another user
+    getOrCreateDirectConversation: async (otherUserId) => {
+        console.log('getOrCreateDirectConversation called with:', otherUserId);
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            console.log('Current auth user:', user?.id);
+            if (!user) throw new Error('Not authenticated');
+
+            // First check local state - but ONLY if user is active (not left)
+            const localConversations = get().conversations;
+            const localExisting = localConversations.find((conv) => {
+                if (conv.is_group) return false;
+                const participants = conv.participants || [];
+                const participantIds = participants.map(p => p.user_id);
+
+                // Check if both users are in the conversation
+                if (!(participantIds.length === 2 &&
+                    participantIds.includes(user.id) &&
+                    participantIds.includes(otherUserId))) {
+                    return false;
+                }
+
+                // Check if current user has NOT left (left_at should be null/undefined)
+                const myParticipation = participants.find(p => p.user_id === user.id);
+                if (myParticipation?.left_at) {
+                    console.log('Found conversation but user has left_at set, skipping local state');
+                    return false;
+                }
+
+                return true;
+            });
+
+            if (localExisting) {
+                console.log('Found existing active conversation in local state:', localExisting.id);
+                return { data: localExisting, error: null };
+            }
+
+            // Check if we have a participation record (active OR left) with other user
+            const { data: myParticipations } = await supabase
+                .from('conversation_participants')
+                .select('conversation_id, left_at')
+                .eq('user_id', user.id);
+
+            if (myParticipations && myParticipations.length > 0) {
+                const myConvIds = myParticipations.map(p => p.conversation_id);
+
+                // Check if other user is in any of these conversations (active only)
+                const { data: sharedConvs } = await supabase
+                    .from('conversation_participants')
+                    .select('conversation_id')
+                    .eq('user_id', otherUserId)
+                    .is('left_at', null)  // Other user must be active
+                    .in('conversation_id', myConvIds);
+
+                if (sharedConvs && sharedConvs.length > 0) {
+                    // Found shared conversation(s), check each one
+                    for (const shared of sharedConvs) {
+                        const { data: conv } = await supabase
+                            .from('conversations')
+                            .select(`
+                                *,
+                                participants:conversation_participants(
+                                    user_id,
+                                    left_at,
+                                    visible_from,
+                                    user:users(id, name, email, avatar_url)
+                                )
+                            `)
+                            .eq('id', shared.conversation_id)
+                            .eq('is_group', false)
+                            .single();
+
+                        if (conv) {
+                            // Check if we had left this conversation
+                            const myParticipation = myParticipations.find(
+                                p => p.conversation_id === conv.id
+                            );
+
+                            if (myParticipation?.left_at) {
+                                // We left this conversation - REJOIN with fresh start
+                                console.log('Rejoining conversation:', conv.id);
+                                const now = new Date().toISOString();
+
+                                const { error: rejoinError } = await supabase
+                                    .from('conversation_participants')
+                                    .update({
+                                        left_at: null,      // Clear left status
+                                        visible_from: now   // Fresh start - only see messages from now
+                                    })
+                                    .eq('conversation_id', conv.id)
+                                    .eq('user_id', user.id);
+
+                                if (rejoinError) throw rejoinError;
+
+                                // Refetch the conversation with updated data
+                                const { data: updatedConv } = await supabase
+                                    .from('conversations')
+                                    .select(`
+                                        *,
+                                        participants:conversation_participants(
+                                            user_id,
+                                            left_at,
+                                            visible_from,
+                                            user:users(id, name, email, avatar_url)
+                                        )
+                                    `)
+                                    .eq('id', conv.id)
+                                    .single();
+
+                                if (updatedConv) {
+                                    get().addConversation(updatedConv as Conversation);
+                                    return { data: updatedConv, error: null };
+                                }
+                            }
+
+                            // We're already active in this conversation
+                            console.log('Found existing active conversation:', conv.id);
+                            get().addConversation(conv as Conversation);
+                            return { data: conv, error: null };
+                        }
+                    }
+                }
+            }
+
+            console.log('No existing conversation, creating new one...');
+            // Create new conversation
+            const result = await get().createConversation([otherUserId]);
+            console.log('createConversation result:', result);
+            return result;
+        } catch (error) {
+            console.error('getOrCreateDirectConversation error:', error);
+            return { data: null, error: error as Error };
+        }
+    },
+}));
