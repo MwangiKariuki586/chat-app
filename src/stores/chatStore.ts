@@ -261,7 +261,7 @@ interface ConversationState {
 
     setConversations: (conversations: Conversation[]) => void;
     setActiveConversation: (id: string | null) => void;
-    fetchConversations: () => Promise<void>;
+    fetchConversations: (userId?: string) => Promise<void>;
     createConversation: (participantIds: string[], name?: string) => Promise<{ data: Conversation | null; error: Error | null }>;
     getOrCreateDirectConversation: (otherUserId: string) => Promise<{ data: Conversation | null; error: Error | null }>;
     deleteConversation: (conversationId: string) => Promise<{ error: Error | null }>;
@@ -378,18 +378,26 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
 
     // Fetch all conversations for current user (where they haven't left)
-    fetchConversations: async () => {
+    fetchConversations: async (userId?: string) => {
         set({ isLoading: true });
 
         try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) throw new Error('Not authenticated');
+            let currentUserId = userId;
+
+            if (!currentUserId) {
+                // Use getSession instead of getUser for header-based auth check (faster/no network call usually)
+                // RLS on the backend will enforce security anyway
+                const { data: { session } } = await supabase.auth.getSession();
+                currentUserId = session?.user?.id;
+            }
+
+            if (!currentUserId) throw new Error('Not authenticated');
 
             // First get conversation IDs where user is an ACTIVE participant (left_at is null)
             const { data: activeParticipations, error: partError } = await supabase
                 .from('conversation_participants')
                 .select('conversation_id')
-                .eq('user_id', user.id)
+                .eq('user_id', currentUserId)
                 .is('left_at', null);
 
             if (partError) throw partError;

@@ -40,8 +40,10 @@ export function ConversationList({
   });
 
   useEffect(() => {
-    fetchConversations();
-  }, [fetchConversations]);
+    if (user?.id) {
+      fetchConversations(user.id);
+    }
+  }, [fetchConversations, user?.id]);
 
   // Reset unread count when conversation is selected
   useEffect(() => {
