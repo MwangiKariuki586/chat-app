@@ -186,15 +186,49 @@
 
 /* Responsive */
 @media (max-width: 768px) {
+    .chat-header.hidden-on-mobile {
+        display: none;
+    }
+
     .chat-main {
+        flex-direction: row;
+    }
+
+    .conversation-list-container {
+        width: 100%;
+        height: 100%;
+        display: flex;
         flex-direction: column;
+        flex: 1;
+    }
+
+    .conversation-list-container.hidden-on-mobile {
+        display: none;
     }
 
     .conversation-list {
         width: 100%;
         min-width: 100%;
-        height: 200px;
         border-right: none;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .chat-window-container {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+    }
+
+    .chat-window-container.hidden-on-mobile {
+        display: none;
+    }
+
+    .no-conversation-selected {
+        display: none;
+    }
+
+    .chat-window {
+        height: 100%;
     }
 }

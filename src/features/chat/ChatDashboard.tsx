@@ -10,6 +10,10 @@ export function ChatDashboard() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [isCreatingChat, setIsCreatingChat] = useState(false);
 
+  const handleBack = () => {
+    setActiveConversationId(null);
+  };
+
   return (
     <div className="chat-dashboard">
       {/* Full-page loading overlay */}
@@ -22,7 +26,8 @@ export function ChatDashboard() {
         </div>
       )}
 
-      <header className="chat-header">
+      {/* Header - Only visible on desktop or when list is active on mobile */}
+      <header className={`chat-header ${activeConversationId ? 'hidden-on-mobile' : ''}`}>
         <h1>💬 Chat</h1>
         <div className="user-info">
           <span className="user-name">{user?.user_metadata?.name || user?.email}</span>
@@ -33,25 +38,31 @@ export function ChatDashboard() {
       </header>
       
       <main className="chat-main">
-        <ConversationList 
-          onSelectConversation={setActiveConversationId}
-          activeConversationId={activeConversationId}
-          onCreatingChat={setIsCreatingChat}
-        />
+        <div className={`conversation-list-container ${activeConversationId ? 'hidden-on-mobile' : ''}`}>
+          <ConversationList 
+            onSelectConversation={setActiveConversationId}
+            activeConversationId={activeConversationId}
+            onCreatingChat={setIsCreatingChat}
+          />
+        </div>
         
-        {activeConversationId ? (
-          <ChatWindow conversationId={activeConversationId} />
-        ) : (
-          <div className="no-conversation-selected">
-            <div className="welcome-content">
-              <span className="welcome-icon">👋</span>
-              <h2>Welcome to Chat!</h2>
-              <p>Select a conversation or start a new one</p>
+        <div className={`chat-window-container ${!activeConversationId ? 'hidden-on-mobile' : ''}`}>
+          {activeConversationId ? (
+            <ChatWindow 
+              conversationId={activeConversationId} 
+              onBack={handleBack}
+            />
+          ) : (
+            <div className="no-conversation-selected">
+              <div className="welcome-content">
+                <span className="welcome-icon">👋</span>
+                <h2>Welcome to Chat!</h2>
+                <p>Select a conversation or start a new one</p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </main>
     </div>
   );
 }
-

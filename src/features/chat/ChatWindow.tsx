@@ -1,13 +1,15 @@
 import { useEffect, useRef, memo } from 'react';
-import { useMessageStore } from '@/stores';
+import { useMessageStore, useConversationStore } from '@/stores';
 import { useRealtimeMessages, useConnectionState, getConnectionStatusDisplay } from '@/hooks';
 import { useAuth } from '@/features/auth';
 import { MessageInput } from './MessageInput';
+import { ArrowLeft, MoreVertical } from 'lucide-react';
 import type { Message } from '@/types';
 import './ChatWindow.css';
 
 interface ChatWindowProps {
   conversationId: string;
+  onBack?: () => void;
 }
 
 // Memoized message bubble to prevent unnecessary re-renders
@@ -47,7 +49,7 @@ function formatTime(dateString: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export function ChatWindow({ conversationId }: ChatWindowProps) {
+export function ChatWindow({ conversationId, onBack }: ChatWindowProps) {
   const { user } = useAuth();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
@@ -98,15 +100,66 @@ export function ChatWindow({ conversationId }: ChatWindowProps) {
     }
   };
 
+  // Get conversation details to display in header
+  const { conversations } = useConversationStore();
+  const conversation = conversations.find(c => c.id === conversationId);
+  
+  const getConversationName = () => {
+    if (!conversation) return 'Chat';
+    if (conversation.name) return conversation.name;
+    if (conversation.is_group) return 'Group Chat';
+    
+    const otherParticipant = conversation.participants?.find(
+      (p: any) => p.user_id !== user?.id
+    );
+    return otherParticipant?.user?.name || 'Unknown User';
+  };
+
+  const getAvatar = () => {
+    if (!conversation) return '👤';
+    if (conversation.is_group) return '👥';
+    const otherParticipant = conversation.participants?.find(
+      (p: any) => p.user_id !== user?.id
+    );
+    return otherParticipant?.user?.avatar_url || '👤';
+  };
+
   const statusDisplay = getConnectionStatusDisplay(status);
 
   return (
     <div className="chat-window">
-      {/* Connection status indicator */}
-      <div className="connection-status" style={{ '--status-color': statusDisplay.color } as React.CSSProperties}>
-        <span className="status-icon">{statusDisplay.icon}</span>
-        <span className="status-text">{statusDisplay.text}</span>
+      {/* Mobile-friendly Header */}
+      <div className="chat-window-header">
+        <div className="header-left">
+          {onBack && (
+            <button onClick={onBack} className="back-button" title="Back to list">
+              <ArrowLeft size={24} />
+            </button>
+          )}
+          <div className="header-avatar">
+            {getAvatar()}
+          </div>
+          <div className="header-info">
+            <h3 className="header-title">{getConversationName()}</h3>
+            <span className="header-status">
+              {status === 'connected' ? 'Online' : 'Connecting...'}
+            </span>
+          </div>
+        </div>
+        <div className="header-right">
+          <button className="menu-button">
+            <MoreVertical size={24} />
+          </button>
+        </div>
       </div>
+
+      {/* Connection status indicator (minimized or integrated) */}
+      {status !== 'connected' && (
+        <div className="connection-status" style={{ '--status-color': statusDisplay.color } as React.CSSProperties}>
+          <span className="status-icon">{statusDisplay.icon}</span>
+          <span className="status-text">{statusDisplay.text}</span>
+        </div>
+      )}
 
       {/* Messages area */}
       <div className="messages-container">
