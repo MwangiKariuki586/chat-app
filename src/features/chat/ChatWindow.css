@@ -8,6 +8,14 @@
     position: relative;
 }
 
+@media (max-width: 768px) {
+    .chat-window {
+        /* height: 100vh;
+        Fallback for older browsers */
+        height: 100svh;
+    }
+}
+
 /* Chat Window Header */
 .chat-window-header {
     display: flex;
