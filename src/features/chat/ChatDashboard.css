@@ -56,6 +56,25 @@
     position: relative;
 }
 
+/* Desktop Styles for Containers */
+.conversation-list-container {
+    width: 320px;
+    height: 100%;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.chat-window-container {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+}
+
 /* No conversation selected state */
 .no-conversation-selected {
     flex: 1;
@@ -200,6 +219,7 @@
         display: flex;
         flex-direction: column;
         flex: 1;
+        border-right: none;
     }
 
     .conversation-list-container.hidden-on-mobile {

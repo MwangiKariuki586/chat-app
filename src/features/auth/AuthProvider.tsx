@@ -137,27 +137,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error ? new Error(error.message) : null };
   }, []);
 
-  // Sign out - always clears local state even if server request fails
+  /* 
+    Sign out with a safety timeout.
+    If the server doesn't respond within 1s, we force clear the local session anyway 
+    to ensure the user isn't stuck in a "logging out" limbo.
+  */
   const signOut = useCallback(async () => {
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error('Sign out error:', error);
-      } else {
-        console.log('Signed out successfully');
-      }
+      // Create a timeout promise that resolves after 1 second
+      const timeoutPromise = new Promise<{ error: null }>((resolve) => {
+        setTimeout(() => resolve({ error: null }), 1000);
+      });
+
+      // Race the actual sign out against the timeout
+      await Promise.race([
+        supabase.auth.signOut(),
+        timeoutPromise
+      ]);
+      
+      console.log('Sign out process completed');
     } catch (err) {
       console.error('Sign out exception:', err);
     } finally {
-      // ALWAYS clear local state, even if sign out fails
+      // ALWAYS clear local state immediately, regardless of server response
       setUser(null);
       setSession(null);
 
-      // Clear any auth-related localStorage
+      // Aggressively clear any auth-related localStorage to prevent zombie sessions
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key && key.includes('supabase')) {
+        if (key && (key.includes('supabase') || key.includes('sb-'))) {
           keysToRemove.push(key);
         }
       }

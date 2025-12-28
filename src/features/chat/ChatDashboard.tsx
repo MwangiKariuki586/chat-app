@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '@/features/auth';
+import { usePresence } from '@/hooks';
 import { ConversationList } from './ConversationList';
 import { ChatWindow } from './ChatWindow';
 import { Loader2 } from 'lucide-react';
@@ -9,6 +10,9 @@ export function ChatDashboard() {
   const { user, signOut } = useAuth();
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [isCreatingChat, setIsCreatingChat] = useState(false);
+  
+  // Track online presence
+  usePresence();
 
   const handleBack = () => {
     setActiveConversationId(null);

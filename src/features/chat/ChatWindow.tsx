@@ -1,5 +1,5 @@
 import { useEffect, useRef, memo } from 'react';
-import { useMessageStore, useConversationStore } from '@/stores';
+import { useMessageStore, useConversationStore, usePresenceStore } from '@/stores';
 import { useRealtimeMessages, useConnectionState, getConnectionStatusDisplay } from '@/hooks';
 import { useAuth } from '@/features/auth';
 import { MessageInput } from './MessageInput';
@@ -104,24 +104,33 @@ export function ChatWindow({ conversationId, onBack }: ChatWindowProps) {
   const { conversations } = useConversationStore();
   const conversation = conversations.find(c => c.id === conversationId);
   
+   // Presence logic
+  const onlineUsers = usePresenceStore((state) => state.onlineUsers);
+  const otherParticipant = conversation?.participants?.find(
+      (p: any) => p.user_id !== user?.id
+  );
+  
+  // Check if the other user is online
+  const isOnline = otherParticipant ? onlineUsers.has(otherParticipant.user_id) : false;
+
   const getConversationName = () => {
     if (!conversation) return 'Chat';
     if (conversation.name) return conversation.name;
     if (conversation.is_group) return 'Group Chat';
     
-    const otherParticipant = conversation.participants?.find(
-      (p: any) => p.user_id !== user?.id
-    );
     return otherParticipant?.user?.name || 'Unknown User';
   };
 
   const getAvatar = () => {
     if (!conversation) return '👤';
     if (conversation.is_group) return '👥';
-    const otherParticipant = conversation.participants?.find(
-      (p: any) => p.user_id !== user?.id
-    );
     return otherParticipant?.user?.avatar_url || '👤';
+  };
+
+  const getStatusText = () => {
+    if (status !== 'connected') return 'Connecting...';
+    if (conversation?.is_group) return `${conversation.participants?.length || 0} members`;
+    return isOnline ? 'Online' : '';
   };
 
   const statusDisplay = getConnectionStatusDisplay(status);
@@ -141,9 +150,11 @@ export function ChatWindow({ conversationId, onBack }: ChatWindowProps) {
           </div>
           <div className="header-info">
             <h3 className="header-title">{getConversationName()}</h3>
-            <span className="header-status">
-              {status === 'connected' ? 'Online' : 'Connecting...'}
-            </span>
+            {getStatusText() && (
+              <span className="header-status" style={{ color: isOnline ? '#4ade80' : undefined }}>
+                {getStatusText()}
+              </span>
+            )}
           </div>
         </div>
         <div className="header-right">
@@ -153,7 +164,7 @@ export function ChatWindow({ conversationId, onBack }: ChatWindowProps) {
         </div>
       </div>
 
-      {/* Connection status indicator (minimized or integrated) */}
+      {/* Connection status indicator (minimized or integrated) - Only show on error or disconnected if not handled by header */}
       {status !== 'connected' && (
         <div className="connection-status" style={{ '--status-color': statusDisplay.color } as React.CSSProperties}>
           <span className="status-icon">{statusDisplay.icon}</span>
