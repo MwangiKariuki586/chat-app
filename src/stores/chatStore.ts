@@ -19,7 +19,7 @@ interface MessageState {
 
     // API actions
     fetchMessages: (conversationId: string) => Promise<void>;
-    sendMessage: (conversationId: string, content: string) => Promise<{ error: Error | null }>;
+    sendMessage: (conversationId: string, content: string) => Promise<{ error: Error | null; newConversationId?: string }>;
 }
 
 export const useMessageStore = create<MessageState>((set, get) => ({
@@ -177,11 +177,45 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         get().addOptimisticMessage(conversationId, content, user.id, tempId);
         set({ isSending: true });
 
+        // Check for optimistic conversation ID (lazy creation)
+        const isOptimisticConversation = conversationId.startsWith('temp-chat-');
+        let finalConversationId = conversationId;
+
+        // If it's an optimistic conversation, create it now
+        if (isOptimisticConversation) {
+            const otherUserId = conversationId.replace('temp-chat-', '');
+            // Need the store instance to call createConversation from here? 
+            // We can access 'useConversationStore' via import, or just use 'get()' if we merged stores, 
+            // but here we are in messageStore. 
+            // Hacky but works: import the store object.
+            // Better: We see useConversationStore is exported in this file!
+
+            // We can use the exported store hook's getState()
+            const { createConversation, removeConversation } = useConversationStore.getState();
+
+            const { data: newConv, error: createError } = await createConversation([otherUserId]);
+
+            if (createError || !newConv) {
+                set({ isSending: false });
+                get().removeMessage(conversationId, tempId);
+                return { error: createError || new Error('Failed to create conversation') };
+            }
+
+            finalConversationId = newConv.id;
+
+            // Remove the optimistic conversation from conversation store
+            removeConversation(conversationId);
+
+            // Note: We don't need to move the optimistic message to the new ID 
+            // because we are about to insert it into DB with finalConversationId.
+            // However, the UI is still showing the OLD conversationId until we return.
+        }
+
         try {
             const { data, error } = await supabase
                 .from('messages')
                 .insert({
-                    conversation_id: conversationId,
+                    conversation_id: finalConversationId,
                     sender_id: user.id,
                     content,
                 })
@@ -202,9 +236,14 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             get().confirmMessage(tempId, data);
 
             set({ isSending: false });
-            return { error: null };
+            return {
+                error: null,
+                newConversationId: isOptimisticConversation ? finalConversationId : undefined
+            };
         } catch (error) {
             set({ isSending: false });
+            // Cleanup optimistic message if failed
+            get().removeMessage(conversationId, tempId);
             return { error: error as Error };
         }
     },
@@ -590,11 +629,47 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 }
             }
 
-            console.log('No existing conversation, creating new one...');
-            // Create new conversation
-            const result = await get().createConversation([otherUserId]);
-            console.log('createConversation result:', result);
-            return result;
+            console.log('No existing conversation, creating OPTIMISTIC one...');
+
+            // Create optimistic conversation object
+            const optimisticId = `temp-chat-${otherUserId}`;
+
+            // Need to fetch other user details to build the optimistic user object
+            const { data: otherUser } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', otherUserId)
+                .single();
+
+            // construct optimistic conversation
+            const optimisticConv: Conversation = {
+                id: optimisticId,
+                name: null,
+                is_group: false,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                participants: [
+                    {
+                        id: 'temp-part-1',
+                        conversation_id: optimisticId,
+                        user_id: user.id,
+                        joined_at: new Date().toISOString(),
+                        user: user as any // simplified
+                    },
+                    {
+                        id: 'temp-part-2',
+                        conversation_id: optimisticId,
+                        user_id: otherUserId,
+                        joined_at: new Date().toISOString(),
+                        user: otherUser as any
+                    }
+                ]
+            };
+
+            // Add to store
+            get().addConversation(optimisticConv);
+
+            return { data: optimisticConv, error: null };
         } catch (error) {
             console.error('getOrCreateDirectConversation error:', error);
             return { data: null, error: error as Error };

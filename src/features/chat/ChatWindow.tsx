@@ -10,6 +10,7 @@ import './ChatWindow.css';
 interface ChatWindowProps {
   conversationId: string;
   onBack?: () => void;
+  onConversationIdChanged?: (newId: string) => void;
 }
 
 // Memoized message bubble to prevent unnecessary re-renders
@@ -49,7 +50,7 @@ function formatTime(dateString: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export function ChatWindow({ conversationId, onBack }: ChatWindowProps) {
+export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: ChatWindowProps) {
   const { user } = useAuth();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
@@ -94,9 +95,12 @@ export function ChatWindow({ conversationId, onBack }: ChatWindowProps) {
   }, [messages]);
 
   const handleSendMessage = async (content: string) => {
-    const { error } = await sendMessage(conversationId, content);
+    const { error, newConversationId } = await sendMessage(conversationId, content);
     if (error) {
       console.error('Failed to send message:', error);
+    } else if (newConversationId && newConversationId !== conversationId) {
+      // Swapped from optimistic to real conversation
+      onConversationIdChanged?.(newConversationId);
     }
   };
 
