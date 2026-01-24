@@ -56,6 +56,25 @@
     position: relative;
 }
 
+/* Desktop Styles for Containers */
+.conversation-list-container {
+    width: 320px;
+    height: 100%;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.chat-window-container {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+}
+
 /* No conversation selected state */
 .no-conversation-selected {
     flex: 1;
@@ -186,15 +205,50 @@
 
 /* Responsive */
 @media (max-width: 768px) {
+    .chat-header.hidden-on-mobile {
+        display: none;
+    }
+
     .chat-main {
+        flex-direction: row;
+    }
+
+    .conversation-list-container {
+        width: 100%;
+        height: 100%;
+        display: flex;
         flex-direction: column;
+        flex: 1;
+        border-right: none;
+    }
+
+    .conversation-list-container.hidden-on-mobile {
+        display: none;
     }
 
     .conversation-list {
         width: 100%;
         min-width: 100%;
-        height: 200px;
         border-right: none;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .chat-window-container {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+    }
+
+    .chat-window-container.hidden-on-mobile {
+        display: none;
+    }
+
+    .no-conversation-selected {
+        display: none;
+    }
+
+    .chat-window {
+        height: 100%;
     }
 }

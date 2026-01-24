@@ -11,13 +11,11 @@ import './ConversationList.css';
 interface ConversationListProps {
   onSelectConversation: (conversationId: string) => void;
   activeConversationId: string | null;
-  onCreatingChat?: (isCreating: boolean) => void;
 }
 
 export function ConversationList({ 
   onSelectConversation, 
   activeConversationId,
-  onCreatingChat
 }: ConversationListProps) {
   const { user } = useAuth();
   const { 
@@ -42,8 +40,10 @@ export function ConversationList({
   });
 
   useEffect(() => {
-    fetchConversations();
-  }, [fetchConversations]);
+    if (user?.id) {
+      fetchConversations(user.id);
+    }
+  }, [fetchConversations, user?.id]);
 
   // Reset unread count when conversation is selected
   useEffect(() => {
@@ -83,9 +83,9 @@ export function ConversationList({
 
   const handleSelectUser = async (otherUser: User) => {
     console.log('handleSelectUser called with:', otherUser);
-    onCreatingChat?.(true);
     setShowNewChat(false); // Close modal immediately for better UX
     
+    // Optimistic UI - Immediately open chat window with temp or real ID
     const { data, error } = await getOrCreateDirectConversation(otherUser.id);
     console.log('getOrCreateDirectConversation result - data:', data, 'error:', error);
     
@@ -93,7 +93,6 @@ export function ConversationList({
       onSelectConversation(data.id);
     }
     
-    onCreatingChat?.(false);
     setSearchQuery('');
   };
 
@@ -248,7 +247,9 @@ export function ConversationList({
         </div>
       ) : (
         <ul className="conversations">
-          {conversations.map((conv) => {
+          {conversations
+            .filter(conv => !conv.id.startsWith('temp-chat-')) // Hide empty draft conversations
+            .map((conv) => {
             const unreadCount = unreadCounts[conv.id] || 0;
             const hasUnread = unreadCount > 0;
             
