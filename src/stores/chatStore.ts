@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Message, Conversation } from '@/types';
+import type { Message, Conversation, MessageReceipt } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { addToOfflineQueue } from '@/lib/offlineQueue';
 
@@ -21,9 +21,12 @@ interface MessageState {
     // Actions
     setMessages: (conversationId: string, messages: Message[]) => void;
     addMessage: (message: Message) => void;
+    addReceipt: (receipt: MessageReceipt) => void;
     addOptimisticMessage: (conversationId: string, content: string, senderId: string, tempId: string) => void;
     confirmMessage: (tempId: string, confirmedMessage: Message) => void;
     removeMessage: (conversationId: string, messageId: string) => void;
+    markAsRead: (conversationId: string) => Promise<void>;
+    updateMessageStatus: (conversationId: string, messageId: string, status: { failed?: boolean }) => void;
 
     // API actions
     fetchMessages: (conversationId: string) => Promise<void>;
@@ -68,6 +71,38 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         });
     },
 
+    // Add a read receipt (from realtime)
+    addReceipt: (receipt) => {
+        set((state) => {
+            // Find which conversation this message belongs to
+            let targetConvId: string | null = null;
+            for (const [convId, messages] of Object.entries(state.messagesByConversation)) {
+                if (messages.some(m => m.id === receipt.message_id)) {
+                    targetConvId = convId;
+                    break;
+                }
+            }
+
+            if (!targetConvId) return state;
+
+            const existingMessages = state.messagesByConversation[targetConvId] || [];
+            return {
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [targetConvId]: existingMessages.map(m => {
+                        if (m.id === receipt.message_id) {
+                            return {
+                                ...m,
+                                receipts: [...(m.receipts || []), receipt]
+                            };
+                        }
+                        return m;
+                    })
+                }
+            };
+        });
+    },
+
     // Add optimistic message (shows immediately before server confirms)
     addOptimisticMessage: (conversationId, content, senderId, tempId) => {
         const optimisticMessage: Message = {
@@ -76,6 +111,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             sender_id: senderId,
             content,
             created_at: new Date().toISOString(),
+            receipts: [],
         };
 
         set((state) => {
@@ -89,6 +125,57 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         });
     },
 
+    // Mark messages as read
+    markAsRead: async (conversationId) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
+        if (!user) return;
+
+        // Get unread messages sent by others
+        const messages = get().messagesByConversation[conversationId] || [];
+        const unreadMessages = messages.filter(m =>
+            m.sender_id !== user.id &&
+            !m.receipts?.some(r => r.user_id === user.id && r.read_at)
+        );
+
+        if (unreadMessages.length === 0) return;
+
+        try {
+            // Upsert receipts
+            const receipts = unreadMessages.map(m => ({
+                message_id: m.id,
+                user_id: user.id,
+                read_at: new Date().toISOString(),
+            }));
+
+            await supabase.from('message_receipts').upsert(receipts);
+
+            // Update local state
+            set((state) => {
+                const existing = state.messagesByConversation[conversationId] || [];
+                return {
+                    messagesByConversation: {
+                        ...state.messagesByConversation,
+                        [conversationId]: existing.map(m => {
+                            if (unreadMessages.some(um => um.id === m.id)) {
+                                return {
+                                    ...m,
+                                    receipts: [
+                                        ...(m.receipts || []),
+                                        { user_id: user.id, read_at: new Date().toISOString() } as any
+                                    ]
+                                };
+                            }
+                            return m;
+                        })
+                    }
+                };
+            });
+        } catch (error) {
+            console.error('Error marking as read:', error);
+        }
+    },
+
     // Replace optimistic message with confirmed one
     confirmMessage: (tempId, confirmedMessage) => {
         set((state) => {
@@ -100,6 +187,21 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                     ...state.messagesByConversation,
                     [conversationId]: existing.map((m) =>
                         m.id === tempId ? confirmedMessage : m
+                    ),
+                },
+            };
+        });
+    },
+
+    // Update message status (e.g. mark as failed)
+    updateMessageStatus: (conversationId, messageId, status) => {
+        set((state) => {
+            const existing = state.messagesByConversation[conversationId] || [];
+            return {
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: existing.map((m) =>
+                        m.id === messageId ? { ...m, ...status } : m
                     ),
                 },
             };
@@ -145,7 +247,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                 .from('messages')
                 .select(`
                     *,
-                    sender:users!sender_id(id, name, email, avatar_url)
+                    sender:users!sender_id(id, name, email, avatar_url),
+                    receipts:message_receipts(*)
                 `)
                 .eq('conversation_id', conversationId);
 
@@ -229,7 +332,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                 .from('messages')
                 .select(`
                     *,
-                    sender:users!sender_id(id, name, email, avatar_url)
+                    sender:users!sender_id(id, name, email, avatar_url),
+                    receipts:message_receipts(*)
                 `)
                 .eq('conversation_id', conversationId)
                 .lt('created_at', oldestMessage.created_at); // Older than current oldest
@@ -274,7 +378,10 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
     // Send a new message
     sendMessage: async (conversationId, content) => {
-        const { data: { user } } = await supabase.auth.getUser();
+        // Use getSession instead of getUser to allow offline sending (getUser verifies with server)
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
+
         if (!user) return { error: new Error('Not authenticated') };
 
         // Generate temp ID for optimistic update
@@ -360,8 +467,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                     return { error: null }; // Keep optimistic message
                 }
 
-                // Real error - remove optimistic message
-                get().removeMessage(conversationId, tempId);
+                // Real error - mark as failed
+                get().updateMessageStatus(conversationId, tempId, { failed: true });
                 throw error;
             }
 
@@ -389,8 +496,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                 return { error: null }; // Keep optimistic message
             }
 
-            // Cleanup optimistic message if truly failed
-            get().removeMessage(conversationId, tempId);
+            // Mark as failed if truly failed
+            get().updateMessageStatus(conversationId, tempId, { failed: true });
             return { error: error as Error };
         }
     },

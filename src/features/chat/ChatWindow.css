@@ -151,6 +151,8 @@
     gap: 0.75rem;
     max-width: 70%;
     animation: fadeIn 0.2s ease;
+    position: relative;
+    padding-right: 1.25rem;
 }
 
 @keyframes fadeIn {
@@ -209,9 +211,37 @@
     background: rgba(255, 255, 255, 0.1);
 }
 
+.message-status-dot {
+    position: absolute;
+    right: 0;
+    bottom: 2rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.message-status-dot.yellow {
+    background-color: #fbbf24;
+}
+
+.message-status-dot.green {
+    background-color: #22c55e;
+}
+
+.message-status-dot.blue {
+    background-color: #3b82f6;
+}
+
+.message-status-dot.red {
+    background-color: #ef4444;
+}
+
 .message.own .message-bubble {
     background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
     border-bottom-right-radius: 0.25rem;
+    padding-right: 1.5rem;
+    /* Space for the dot */
 }
 
 .message.other .message-bubble {

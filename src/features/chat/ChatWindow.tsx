@@ -23,7 +23,16 @@ const MessageBubble = memo(function MessageBubble({
   isOwn: boolean;
 }) {
   const isOptimistic = message.id.startsWith('temp-');
+  const isRead = message.receipts?.some(r => r.read_at && r.user_id !== message.sender_id);
+  const isFailed = (message as any).failed; // We'll add this to the type/store logic
   
+  const getStatusColor = () => {
+    if (isFailed) return 'red';
+    if (isOptimistic) return 'yellow';
+    if (isRead) return 'blue';
+    return 'green';
+  };
+
   return (
     <div className={`message ${isOwn ? 'own' : 'other'} ${isOptimistic ? 'sending' : ''}`}>
       {!isOwn && (
@@ -38,6 +47,10 @@ const MessageBubble = memo(function MessageBubble({
         <div className="message-bubble">
           <p>{message.content}</p>
         </div>
+        {isOwn && (
+          <div className={`message-status-dot ${getStatusColor()}`} 
+               title={getStatusColor().toUpperCase()} />
+        )}
         <span className="message-time">
           {isOptimistic ? 'Sending...' : formatTime(message.created_at)}
         </span>
@@ -63,11 +76,19 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
     paginationState,
     fetchMessages,
     fetchMoreMessages,
-    sendMessage 
+    sendMessage,
+    markAsRead
   } = useMessageStore();
   
   const messages = messagesByConversation[conversationId] || [];
   const pagination = paginationState[conversationId];
+
+  // Mark as read when conversation opens or messages change
+  useEffect(() => {
+    if (conversationId && messages.length > 0) {
+      markAsRead(conversationId);
+    }
+  }, [conversationId, messages.length, markAsRead]);
 
   // Connection state management
   const { 
@@ -90,9 +111,11 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
   // Fetch initial messages
   useEffect(() => {
     if (conversationId) {
-      fetchMessages(conversationId);
+      fetchMessages(conversationId).then(() => {
+        markAsRead(conversationId);
+      });
     }
-  }, [conversationId, fetchMessages]);
+  }, [conversationId, fetchMessages, markAsRead]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -227,7 +250,6 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
       <MessageInput 
         key={conversationId} // Force re-mount to trigger autoFocus on conversation change
         onSendMessage={handleSendMessage} 
-        disabled={!isConnected}
         autoFocus
         userId={user?.id}
       />

@@ -63,13 +63,12 @@ export function incrementRetryCount(messageId: string): void {
  * Process the offline queue when coming back online
  */
 export async function processOfflineQueue(
-    onMessageSent?: (messageId: string) => void,
+    onMessageSent?: (messageId: string, data: any) => void,
     onMessageFailed?: (messageId: string, error: Error) => void
 ): Promise<void> {
     const queue = getOfflineQueue();
 
     if (queue.length === 0) {
-        console.log('📤 Offline queue is empty');
         return;
     }
 
@@ -84,19 +83,25 @@ export async function processOfflineQueue(
         }
 
         try {
-            const { data: { user } } = await supabase.auth.getUser();
+            const { data: { session } } = await supabase.auth.getSession();
+            const user = session?.user;
             if (!user) {
                 console.warn('📤 Not authenticated, stopping queue processing');
                 break;
             }
 
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('messages')
                 .insert({
                     conversation_id: message.conversationId,
                     sender_id: user.id,
                     content: message.content,
-                });
+                })
+                .select(`
+                    *,
+                    sender:users!sender_id(id, name, email, avatar_url)
+                `)
+                .single();
 
             if (error) {
                 throw error;
@@ -104,7 +109,7 @@ export async function processOfflineQueue(
 
             console.log(`📤 Successfully sent queued message: ${message.id}`);
             removeFromOfflineQueue(message.id);
-            onMessageSent?.(message.id);
+            onMessageSent?.(message.id, data);
         } catch (error) {
             console.error(`📤 Failed to send queued message: ${message.id}`, error);
             incrementRetryCount(message.id);
