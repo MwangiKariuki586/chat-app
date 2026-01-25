@@ -1,0 +1,115 @@
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.error-boundary-content {
+  background: white;
+  border-radius: 16px;
+  padding: 3rem 2rem;
+  max-width: 500px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+
+.error-icon {
+  font-size: 4rem;
+  display: block;
+  margin-bottom: 1rem;
+  animation: shake 0.5s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-10px); }
+  75% { transform: translateX(10px); }
+}
+
+.error-boundary-content h2 {
+  font-size: 1.75rem;
+  color: #1f2937;
+  margin: 0 0 0.5rem;
+}
+
+.error-message {
+  color: #6b7280;
+  margin: 0 0 1.5rem;
+  line-height: 1.6;
+}
+
+.error-details {
+  margin: 1.5rem 0;
+  text-align: left;
+  background: #f3f4f6;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.error-details summary {
+  cursor: pointer;
+  color: #6b7280;
+  font-weight: 500;
+  user-select: none;
+}
+
+.error-details summary:hover {
+  color: #374151;
+}
+
+.error-details pre {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #1f2937;
+  color: #ef4444;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.error-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+.error-actions button {
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 1rem;
+}
+
+.retry-btn {
+  background: #667eea;
+  color: white;
+}
+
+.retry-btn:hover {
+  background: #5568d3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.reload-btn {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.reload-btn:hover {
+  background: #d1d5db;
+  transform: translateY(-1px);
+}
+
+.error-actions button:active {
+  transform: translateY(0);
+}

@@ -2,6 +2,7 @@ import { useEffect, useRef, memo } from 'react';
 import { useMessageStore, useConversationStore, usePresenceStore } from '@/stores';
 import { useRealtimeMessages, useConnectionState, getConnectionStatusDisplay } from '@/hooks';
 import { useAuth } from '@/features/auth';
+import { MessagesSkeleton } from '@/components/LoadingSkeleton';
 import { MessageInput } from './MessageInput';
 import { ArrowLeft, MoreVertical } from 'lucide-react';
 import type { Message } from '@/types';
@@ -58,11 +59,15 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
   const { 
     messagesByConversation, 
     isLoading, 
+    isLoadingMore,
+    paginationState,
     fetchMessages,
+    fetchMoreMessages,
     sendMessage 
   } = useMessageStore();
   
   const messages = messagesByConversation[conversationId] || [];
+  const pagination = paginationState[conversationId];
 
   // Connection state management
   const { 
@@ -179,10 +184,7 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
       {/* Messages area */}
       <div className="messages-container">
         {isLoading ? (
-          <div className="loading-messages">
-            <div className="loading-spinner-small"></div>
-            <span>Loading messages...</span>
-          </div>
+          <MessagesSkeleton />
         ) : messages.length === 0 ? (
           <div className="no-messages">
             <span className="no-messages-icon">💬</span>
@@ -190,6 +192,25 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
           </div>
         ) : (
           <div className="messages-list">
+            {/* Load more button at top */}
+            {pagination?.hasMore && (
+              <div className="load-more-container">
+                <button 
+                  className="load-more-btn"
+                  onClick={() => fetchMoreMessages(conversationId)}
+                  disabled={isLoadingMore}
+                >
+                  {isLoadingMore ? (
+                    <>
+                      <span className="loading-spinner-small"></span>
+                      Loading...
+                    </>
+                  ) : (
+                    'Load older messages'
+                  )}
+                </button>
+              </div>
+            )}
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}
@@ -208,6 +229,7 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
         onSendMessage={handleSendMessage} 
         disabled={!isConnected}
         autoFocus
+        userId={user?.id}
       />
     </div>
   );

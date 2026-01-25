@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Message, Conversation } from '@/types';
 import { supabase } from '@/lib/supabase';
+import { addToOfflineQueue } from '@/lib/offlineQueue';
 
 interface MessageState {
     // Messages grouped by conversation ID
@@ -9,6 +10,13 @@ interface MessageState {
     // Loading states
     isLoading: boolean;
     isSending: boolean;
+    isLoadingMore: boolean;
+
+    // Pagination state per conversation
+    paginationState: Record<string, {
+        hasMore: boolean;
+        oldestMessageId: string | null;
+    }>;
 
     // Actions
     setMessages: (conversationId: string, messages: Message[]) => void;
@@ -19,6 +27,7 @@ interface MessageState {
 
     // API actions
     fetchMessages: (conversationId: string) => Promise<void>;
+    fetchMoreMessages: (conversationId: string) => Promise<void>;
     sendMessage: (conversationId: string, content: string) => Promise<{ error: Error | null; newConversationId?: string }>;
 }
 
@@ -26,6 +35,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     messagesByConversation: {},
     isLoading: false,
     isSending: false,
+    isLoadingMore: false,
+    paginationState: {},
 
     // Set all messages for a conversation
     setMessages: (conversationId, messages) => {
@@ -112,6 +123,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     fetchMessages: async (conversationId) => {
         set({ isLoading: true });
 
+        const PAGE_SIZE = 50;
+
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Not authenticated');
@@ -127,7 +140,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             console.log('📧 fetchMessages - participation data:', participation);
             console.log('📧 fetchMessages - participation error:', partError);
 
-            // Build query
+            // Build query - fetch most recent messages first
             let query = supabase
                 .from('messages')
                 .select(`
@@ -145,23 +158,117 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             }
 
             const { data, error } = await query
-                .order('created_at', { ascending: true })
-                .limit(50);
+                .order('created_at', { ascending: false }) // Most recent first for pagination
+                .limit(PAGE_SIZE);
 
             if (error) throw error;
 
-            console.log('📧 Fetched messages count:', data?.length);
+            // Reverse to show in chronological order (oldest first)
+            const messages = (data || []).reverse();
+            const hasMore = (data?.length || 0) >= PAGE_SIZE;
+            const oldestMessage = messages[0];
+
+            console.log('📧 Fetched messages count:', messages.length, 'hasMore:', hasMore);
 
             set((state) => ({
                 isLoading: false,
                 messagesByConversation: {
                     ...state.messagesByConversation,
-                    [conversationId]: data || [],
+                    [conversationId]: messages,
+                },
+                paginationState: {
+                    ...state.paginationState,
+                    [conversationId]: {
+                        hasMore,
+                        oldestMessageId: oldestMessage?.id || null,
+                    },
                 },
             }));
         } catch (error) {
             console.error('Error fetching messages:', error);
             set({ isLoading: false });
+        }
+    },
+
+    // Fetch more (older) messages for pagination
+    fetchMoreMessages: async (conversationId) => {
+        const currentState = get();
+        const pagination = currentState.paginationState[conversationId];
+
+        // Don't fetch if already loading or no more messages
+        if (currentState.isLoadingMore || !pagination?.hasMore) {
+            return;
+        }
+
+        set({ isLoadingMore: true });
+
+        const PAGE_SIZE = 50;
+
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Not authenticated');
+
+            const existingMessages = currentState.messagesByConversation[conversationId] || [];
+            const oldestMessage = existingMessages[0];
+
+            if (!oldestMessage) {
+                set({ isLoadingMore: false });
+                return;
+            }
+
+            // Get user's visible_from for this conversation
+            const { data: participation } = await supabase
+                .from('conversation_participants')
+                .select('visible_from')
+                .eq('conversation_id', conversationId)
+                .eq('user_id', user.id)
+                .single();
+
+            // Build query for messages older than the oldest we have
+            let query = supabase
+                .from('messages')
+                .select(`
+                    *,
+                    sender:users!sender_id(id, name, email, avatar_url)
+                `)
+                .eq('conversation_id', conversationId)
+                .lt('created_at', oldestMessage.created_at); // Older than current oldest
+
+            // Filter by visible_from if set
+            if (participation?.visible_from) {
+                query = query.gte('created_at', participation.visible_from);
+            }
+
+            const { data, error } = await query
+                .order('created_at', { ascending: false })
+                .limit(PAGE_SIZE);
+
+            if (error) throw error;
+
+            // Reverse to chronological order
+            const olderMessages = (data || []).reverse();
+            const hasMore = (data?.length || 0) >= PAGE_SIZE;
+            const newOldestMessage = olderMessages[0];
+
+            console.log('📧 Fetched more messages:', olderMessages.length, 'hasMore:', hasMore);
+
+            set((state) => ({
+                isLoadingMore: false,
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: [...olderMessages, ...existingMessages],
+                },
+                paginationState: {
+                    ...state.paginationState,
+                    [conversationId]: {
+                        hasMore,
+                        oldestMessageId: newOldestMessage?.id || oldestMessage.id,
+                    },
+                },
+            }));
+        } catch (error) {
+            console.error('Error fetching more messages:', error);
+            set({ isLoadingMore: false });
         }
     },
 
@@ -176,6 +283,20 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         // Add optimistic message immediately
         get().addOptimisticMessage(conversationId, content, user.id, tempId);
         set({ isSending: true });
+
+        // Check if we're offline - queue the message for later
+        if (!navigator.onLine) {
+            console.log('📴 Offline - queueing message for later sync');
+            addToOfflineQueue({
+                id: tempId,
+                conversationId,
+                content,
+                createdAt: new Date().toISOString(),
+            });
+            set({ isSending: false });
+            // Return success - optimistic message stays visible, will sync when online
+            return { error: null };
+        }
 
         // Check for optimistic conversation ID (lazy creation)
         const isOptimisticConversation = conversationId.startsWith('temp-chat-');
@@ -226,7 +347,20 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                 .single();
 
             if (error) {
-                // Remove optimistic message on error
+                // Check if this is a network error - queue for offline
+                if (!navigator.onLine || error.message?.includes('network') || error.message?.includes('fetch')) {
+                    console.log('📴 Network error - queueing message for later sync');
+                    addToOfflineQueue({
+                        id: tempId,
+                        conversationId: finalConversationId,
+                        content,
+                        createdAt: new Date().toISOString(),
+                    });
+                    set({ isSending: false });
+                    return { error: null }; // Keep optimistic message
+                }
+
+                // Real error - remove optimistic message
                 get().removeMessage(conversationId, tempId);
                 throw error;
             }
@@ -242,7 +376,20 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             };
         } catch (error) {
             set({ isSending: false });
-            // Cleanup optimistic message if failed
+
+            // Check if network error - queue instead of failing
+            if (!navigator.onLine) {
+                console.log('📴 Caught offline during send - queueing message');
+                addToOfflineQueue({
+                    id: tempId,
+                    conversationId: finalConversationId,
+                    content,
+                    createdAt: new Date().toISOString(),
+                });
+                return { error: null }; // Keep optimistic message
+            }
+
+            // Cleanup optimistic message if truly failed
             get().removeMessage(conversationId, tempId);
             return { error: error as Error };
         }
