@@ -1,4 +1,4 @@
-import { useEffect, useRef, memo } from 'react';
+import { useEffect, useRef, memo, useState } from 'react';
 import { useMessageStore, useConversationStore, usePresenceStore } from '@/stores';
 import { useRealtimeMessages, useConnectionState, getConnectionStatusDisplay } from '@/hooks';
 import { useAuth } from '@/features/auth';
@@ -22,10 +22,16 @@ const MessageBubble = memo(function MessageBubble({
   message: Message; 
   isOwn: boolean;
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const isOptimistic = message.id.startsWith('temp-');
   const isRead = message.receipts?.some(r => r.read_at && r.user_id !== message.sender_id);
-  const isFailed = (message as any).failed; // We'll add this to the type/store logic
+  const isFailed = (message as any).failed;
   
+  // Truncate logic
+  const MAX_CHARS = 300;
+  const isLongMessage = message.content.length > MAX_CHARS || (message.content.match(/\n/g) || []).length > 4;
+  const shouldTruncate = isLongMessage && !isExpanded;
+
   const getStatusColor = () => {
     if (isFailed) return 'red';
     if (isOptimistic) return 'yellow';
@@ -44,8 +50,18 @@ const MessageBubble = memo(function MessageBubble({
         {!isOwn && (
           <span className="message-sender">{message.sender?.name || 'Unknown'}</span>
         )}
-        <div className="message-bubble">
-          <p>{message.content}</p>
+        <div className={`message-bubble ${shouldTruncate ? 'truncated' : ''}`}>
+          <p className="message-text">
+            {shouldTruncate ? `${message.content.slice(0, MAX_CHARS)}...` : message.content}
+          </p>
+          {isLongMessage && (
+            <button 
+              onClick={() => setIsExpanded(!isExpanded)} 
+              className="see-more-btn"
+            >
+              {isExpanded ? 'See less' : 'See more'}
+            </button>
+          )}
         </div>
         {isOwn && (
           <div className={`message-status-dot ${getStatusColor()}`} 

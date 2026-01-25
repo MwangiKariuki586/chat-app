@@ -196,6 +196,8 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    min-width: 0;
+    /* Critical for text overflow in flex items */
 }
 
 .message-sender {
@@ -209,6 +211,10 @@
     padding: 0.75rem 1rem;
     border-radius: 1rem;
     background: rgba(255, 255, 255, 0.1);
+    overflow-wrap: anywhere;
+    /* Force word wrap for long strings */
+    word-break: break-word;
+    /* Additional backup for legacy browsers */
 }
 
 .message-status-dot {
@@ -261,6 +267,29 @@
     color: rgba(255, 255, 255, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(4px);
+}
+
+.message-text {
+    margin: 0;
+    white-space: pre-wrap;
+    /* Preserve newlines */
+}
+
+.see-more-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin-top: 0.25rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.75rem;
+    cursor: pointer;
+    font-weight: 500;
+    text-decoration: underline;
+    opacity: 0.8;
+}
+
+.see-more-btn:hover {
+    opacity: 1;
 }
 
 .message.own .message-bubble {
