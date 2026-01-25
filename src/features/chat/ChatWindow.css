@@ -237,11 +237,35 @@
     background-color: #ef4444;
 }
 
+/* Message Grouping */
+.date-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.date-separator {
+    display: flex;
+    justify-content: center;
+    margin: 1rem 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.date-separator span {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(4px);
+}
+
 .message.own .message-bubble {
     background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
     border-bottom-right-radius: 0.25rem;
-    padding-right: 1.5rem;
-    /* Space for the dot */
 }
 
 .message.other .message-bubble {

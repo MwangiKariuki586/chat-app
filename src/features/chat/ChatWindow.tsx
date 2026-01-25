@@ -64,8 +64,37 @@ function formatTime(dateString: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// Helper to group messages by date
+function groupMessagesByDate(messages: Message[]) {
+  const groups: Record<string, Message[]> = {};
+  
+  messages.forEach(message => {
+    const date = new Date(message.created_at);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    let dateKey = date.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
+    
+    if (date.toDateString() === today.toDateString()) {
+      dateKey = 'Today';
+    } else if (date.toDateString() === yesterday.toDateString()) {
+      dateKey = 'Yesterday';
+    }
+    
+    if (!groups[dateKey]) {
+      groups[dateKey] = [];
+    }
+    groups[dateKey].push(message);
+  });
+  
+  return groups;
+}
+
 export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: ChatWindowProps) {
   const { user } = useAuth();
+  // ... rest of component
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   // Get messages from store
@@ -234,12 +263,21 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
                 </button>
               </div>
             )}
-            {messages.map((message) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                isOwn={message.sender_id === user?.id}
-              />
+            
+            {/* Group messages by date */}
+            {Object.entries(groupMessagesByDate(messages)).map(([date, msgs]) => (
+              <div key={date} className="date-group">
+                <div className="date-separator">
+                  <span>{date}</span>
+                </div>
+                {msgs.map((message) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    isOwn={message.sender_id === user?.id}
+                  />
+                ))}
+              </div>
             ))}
             <div ref={messagesEndRef} />
           </div>
