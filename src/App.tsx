@@ -4,6 +4,7 @@ import { ChatDashboard } from '@/features/chat';
 import { ProtectedRoute, PublicRoute } from '@/components/RouteGuards';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ToastProvider } from '@/components/Toast';
+import { OfflineIndicator } from '@/components/OfflineIndicator';
 import '@/components/ErrorBoundary.css';
 
 function App() {
@@ -24,6 +25,7 @@ function App() {
             </Routes>
           </AuthProvider>
         </BrowserRouter>
+        <OfflineIndicator />
       </ToastProvider>
     </ErrorBoundary>
   );

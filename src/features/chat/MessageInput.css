@@ -88,12 +88,73 @@
     display: block;
     font-size: 0.7rem;
     color: rgba(255, 255, 255, 0.3);
-    text-align: center;
+}
+
+.input-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin-top: 0.5rem;
+    padding: 0 0.5rem;
+}
+
+.char-count {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.4);
+    transition: color 0.2s;
+}
+
+.char-count.at-limit {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.message-input-error {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+}
+
+.message-textarea.has-error {
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.message-textarea.has-error:focus {
+    border-color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
 }
 
 @keyframes spin {
     to {
         transform: rotate(360deg);
+    }
+}
+
+.rate-limit-warning {
+    font-size: 0.75rem;
+    color: #fbbf24;
+    font-weight: 500;
+}
+
+.rate-limit-cooldown {
+    font-size: 0.75rem;
+    color: #ef4444;
+    font-weight: 600;
+    animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
     }
 }

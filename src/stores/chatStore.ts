@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import type { Message, Conversation } from '@/types';
+import type { Message, Conversation, MessageReceipt } from '@/types';
 import { supabase } from '@/lib/supabase';
+import { addToOfflineQueue } from '@/lib/offlineQueue';
 
 interface MessageState {
     // Messages grouped by conversation ID
@@ -9,16 +10,27 @@ interface MessageState {
     // Loading states
     isLoading: boolean;
     isSending: boolean;
+    isLoadingMore: boolean;
+
+    // Pagination state per conversation
+    paginationState: Record<string, {
+        hasMore: boolean;
+        oldestMessageId: string | null;
+    }>;
 
     // Actions
     setMessages: (conversationId: string, messages: Message[]) => void;
     addMessage: (message: Message) => void;
+    addReceipt: (receipt: MessageReceipt) => void;
     addOptimisticMessage: (conversationId: string, content: string, senderId: string, tempId: string) => void;
     confirmMessage: (tempId: string, confirmedMessage: Message) => void;
     removeMessage: (conversationId: string, messageId: string) => void;
+    markAsRead: (conversationId: string) => Promise<void>;
+    updateMessageStatus: (conversationId: string, messageId: string, status: { failed?: boolean }) => void;
 
     // API actions
     fetchMessages: (conversationId: string) => Promise<void>;
+    fetchMoreMessages: (conversationId: string) => Promise<void>;
     sendMessage: (conversationId: string, content: string) => Promise<{ error: Error | null; newConversationId?: string }>;
 }
 
@@ -26,6 +38,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     messagesByConversation: {},
     isLoading: false,
     isSending: false,
+    isLoadingMore: false,
+    paginationState: {},
 
     // Set all messages for a conversation
     setMessages: (conversationId, messages) => {
@@ -57,6 +71,38 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         });
     },
 
+    // Add a read receipt (from realtime)
+    addReceipt: (receipt) => {
+        set((state) => {
+            // Find which conversation this message belongs to
+            let targetConvId: string | null = null;
+            for (const [convId, messages] of Object.entries(state.messagesByConversation)) {
+                if (messages.some(m => m.id === receipt.message_id)) {
+                    targetConvId = convId;
+                    break;
+                }
+            }
+
+            if (!targetConvId) return state;
+
+            const existingMessages = state.messagesByConversation[targetConvId] || [];
+            return {
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [targetConvId]: existingMessages.map(m => {
+                        if (m.id === receipt.message_id) {
+                            return {
+                                ...m,
+                                receipts: [...(m.receipts || []), receipt]
+                            };
+                        }
+                        return m;
+                    })
+                }
+            };
+        });
+    },
+
     // Add optimistic message (shows immediately before server confirms)
     addOptimisticMessage: (conversationId, content, senderId, tempId) => {
         const optimisticMessage: Message = {
@@ -65,6 +111,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             sender_id: senderId,
             content,
             created_at: new Date().toISOString(),
+            receipts: [],
         };
 
         set((state) => {
@@ -78,6 +125,57 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         });
     },
 
+    // Mark messages as read
+    markAsRead: async (conversationId) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
+        if (!user) return;
+
+        // Get unread messages sent by others
+        const messages = get().messagesByConversation[conversationId] || [];
+        const unreadMessages = messages.filter(m =>
+            m.sender_id !== user.id &&
+            !m.receipts?.some(r => r.user_id === user.id && r.read_at)
+        );
+
+        if (unreadMessages.length === 0) return;
+
+        try {
+            // Upsert receipts
+            const receipts = unreadMessages.map(m => ({
+                message_id: m.id,
+                user_id: user.id,
+                read_at: new Date().toISOString(),
+            }));
+
+            await supabase.from('message_receipts').upsert(receipts);
+
+            // Update local state
+            set((state) => {
+                const existing = state.messagesByConversation[conversationId] || [];
+                return {
+                    messagesByConversation: {
+                        ...state.messagesByConversation,
+                        [conversationId]: existing.map(m => {
+                            if (unreadMessages.some(um => um.id === m.id)) {
+                                return {
+                                    ...m,
+                                    receipts: [
+                                        ...(m.receipts || []),
+                                        { user_id: user.id, read_at: new Date().toISOString() } as any
+                                    ]
+                                };
+                            }
+                            return m;
+                        })
+                    }
+                };
+            });
+        } catch (error) {
+            console.error('Error marking as read:', error);
+        }
+    },
+
     // Replace optimistic message with confirmed one
     confirmMessage: (tempId, confirmedMessage) => {
         set((state) => {
@@ -89,6 +187,21 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                     ...state.messagesByConversation,
                     [conversationId]: existing.map((m) =>
                         m.id === tempId ? confirmedMessage : m
+                    ),
+                },
+            };
+        });
+    },
+
+    // Update message status (e.g. mark as failed)
+    updateMessageStatus: (conversationId, messageId, status) => {
+        set((state) => {
+            const existing = state.messagesByConversation[conversationId] || [];
+            return {
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: existing.map((m) =>
+                        m.id === messageId ? { ...m, ...status } : m
                     ),
                 },
             };
@@ -112,6 +225,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     fetchMessages: async (conversationId) => {
         set({ isLoading: true });
 
+        const PAGE_SIZE = 25;
+
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) throw new Error('Not authenticated');
@@ -127,12 +242,13 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             console.log('📧 fetchMessages - participation data:', participation);
             console.log('📧 fetchMessages - participation error:', partError);
 
-            // Build query
+            // Build query - fetch most recent messages first
             let query = supabase
                 .from('messages')
                 .select(`
                     *,
-                    sender:users!sender_id(id, name, email, avatar_url)
+                    sender:users!sender_id(id, name, email, avatar_url),
+                    receipts:message_receipts(*)
                 `)
                 .eq('conversation_id', conversationId);
 
@@ -145,18 +261,31 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             }
 
             const { data, error } = await query
-                .order('created_at', { ascending: true })
-                .limit(50);
+                .order('created_at', { ascending: false }) // Most recent first for pagination
+                .limit(PAGE_SIZE);
 
             if (error) throw error;
 
-            console.log('📧 Fetched messages count:', data?.length);
+            // Reverse to show in chronological order (oldest first)
+            const messages = (data || []).reverse();
+            const hasMore = (data?.length || 0) >= PAGE_SIZE;
+            const oldestMessage = messages[0];
+
+            console.log('📧 Fetched messages count:', messages.length, 'hasMore:', hasMore);
+            console.log('📧 All fetched messages:', messages);
 
             set((state) => ({
                 isLoading: false,
                 messagesByConversation: {
                     ...state.messagesByConversation,
-                    [conversationId]: data || [],
+                    [conversationId]: messages,
+                },
+                paginationState: {
+                    ...state.paginationState,
+                    [conversationId]: {
+                        hasMore,
+                        oldestMessageId: oldestMessage?.id || null,
+                    },
                 },
             }));
         } catch (error) {
@@ -165,9 +294,96 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         }
     },
 
+    // Fetch more (older) messages for pagination
+    fetchMoreMessages: async (conversationId) => {
+        const currentState = get();
+        const pagination = currentState.paginationState[conversationId];
+
+        // Don't fetch if already loading or no more messages
+        if (currentState.isLoadingMore || !pagination?.hasMore) {
+            return;
+        }
+
+        set({ isLoadingMore: true });
+
+        const PAGE_SIZE = 25;
+
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Not authenticated');
+
+            const existingMessages = currentState.messagesByConversation[conversationId] || [];
+            const oldestMessage = existingMessages[0];
+
+            if (!oldestMessage) {
+                set({ isLoadingMore: false });
+                return;
+            }
+
+            // Get user's visible_from for this conversation
+            const { data: participation } = await supabase
+                .from('conversation_participants')
+                .select('visible_from')
+                .eq('conversation_id', conversationId)
+                .eq('user_id', user.id)
+                .single();
+
+            // Build query for messages older than the oldest we have
+            let query = supabase
+                .from('messages')
+                .select(`
+                    *,
+                    sender:users!sender_id(id, name, email, avatar_url),
+                    receipts:message_receipts(*)
+                `)
+                .eq('conversation_id', conversationId)
+                .lt('created_at', oldestMessage.created_at); // Older than current oldest
+
+            // Filter by visible_from if set
+            if (participation?.visible_from) {
+                query = query.gte('created_at', participation.visible_from);
+            }
+
+            const { data, error } = await query
+                .order('created_at', { ascending: false })
+                .limit(PAGE_SIZE);
+
+            if (error) throw error;
+
+            // Reverse to chronological order
+            const olderMessages = (data || []).reverse();
+            const hasMore = (data?.length || 0) >= PAGE_SIZE;
+            const newOldestMessage = olderMessages[0];
+
+            console.log('📧 Fetched more messages:', olderMessages.length, 'hasMore:', hasMore);
+            console.log('📧 All fetched MORE messages:', olderMessages);
+
+            set((state) => ({
+                isLoadingMore: false,
+                messagesByConversation: {
+                    ...state.messagesByConversation,
+                    [conversationId]: [...olderMessages, ...existingMessages],
+                },
+                paginationState: {
+                    ...state.paginationState,
+                    [conversationId]: {
+                        hasMore,
+                        oldestMessageId: newOldestMessage?.id || oldestMessage.id,
+                    },
+                },
+            }));
+        } catch (error) {
+            console.error('Error fetching more messages:', error);
+            set({ isLoadingMore: false });
+        }
+    },
+
     // Send a new message
     sendMessage: async (conversationId, content) => {
-        const { data: { user } } = await supabase.auth.getUser();
+        // Use getSession instead of getUser to allow offline sending (getUser verifies with server)
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
+
         if (!user) return { error: new Error('Not authenticated') };
 
         // Generate temp ID for optimistic update
@@ -176,6 +392,20 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         // Add optimistic message immediately
         get().addOptimisticMessage(conversationId, content, user.id, tempId);
         set({ isSending: true });
+
+        // Check if we're offline - queue the message for later
+        if (!navigator.onLine) {
+            console.log('📴 Offline - queueing message for later sync');
+            addToOfflineQueue({
+                id: tempId,
+                conversationId,
+                content,
+                createdAt: new Date().toISOString(),
+            });
+            set({ isSending: false });
+            // Return success - optimistic message stays visible, will sync when online
+            return { error: null };
+        }
 
         // Check for optimistic conversation ID (lazy creation)
         const isOptimisticConversation = conversationId.startsWith('temp-chat-');
@@ -226,8 +456,21 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                 .single();
 
             if (error) {
-                // Remove optimistic message on error
-                get().removeMessage(conversationId, tempId);
+                // Check if this is a network error - queue for offline
+                if (!navigator.onLine || error.message?.includes('network') || error.message?.includes('fetch')) {
+                    console.log('📴 Network error - queueing message for later sync');
+                    addToOfflineQueue({
+                        id: tempId,
+                        conversationId: finalConversationId,
+                        content,
+                        createdAt: new Date().toISOString(),
+                    });
+                    set({ isSending: false });
+                    return { error: null }; // Keep optimistic message
+                }
+
+                // Real error - mark as failed
+                get().updateMessageStatus(conversationId, tempId, { failed: true });
                 throw error;
             }
 
@@ -242,8 +485,21 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             };
         } catch (error) {
             set({ isSending: false });
-            // Cleanup optimistic message if failed
-            get().removeMessage(conversationId, tempId);
+
+            // Check if network error - queue instead of failing
+            if (!navigator.onLine) {
+                console.log('📴 Caught offline during send - queueing message');
+                addToOfflineQueue({
+                    id: tempId,
+                    conversationId: finalConversationId,
+                    content,
+                    createdAt: new Date().toISOString(),
+                });
+                return { error: null }; // Keep optimistic message
+            }
+
+            // Mark as failed if truly failed
+            get().updateMessageStatus(conversationId, tempId, { failed: true });
             return { error: error as Error };
         }
     },

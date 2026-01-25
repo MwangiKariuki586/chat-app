@@ -1,0 +1,102 @@
+.skeleton {
+    background: linear-gradient(90deg,
+            rgba(255, 255, 255, 0.08) 0%,
+            rgba(255, 255, 255, 0.15) 50%,
+            rgba(255, 255, 255, 0.08) 100%);
+    background-size: 200% 100%;
+    animation: loading 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+@keyframes loading {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.skeleton-text {
+    height: 14px;
+    margin: 6px 0;
+}
+
+.skeleton-circular {
+    border-radius: 50%;
+}
+
+.skeleton-rectangular {
+    border-radius: 8px;
+}
+
+/* Conversation List Skeleton */
+.conversation-list-skeleton {
+    padding: 1rem;
+}
+
+.conversation-item-skeleton {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+.conversation-details-skeleton {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Messages Skeleton */
+.messages-skeleton {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.message-skeleton {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+}
+
+.message-skeleton.own {
+    flex-direction: row-reverse;
+}
+
+.message-skeleton.own .message-content-skeleton {
+    align-items: flex-end;
+}
+
+.message-content-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    max-width: 70%;
+}
+
+/* User List Skeleton */
+.user-list-skeleton {
+    padding: 0.5rem;
+}
+
+.user-item-skeleton {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+.user-info-skeleton {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}

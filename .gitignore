@@ -2,13 +2,26 @@
 logs
 *.log
 npm-debug.log*
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+/e2e/.auth/
+.env.e2e
+
+# Test artifacts
+test-results.json
+coverage/
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-.agent
+.agent/recommendations
+.agent/tasks
 dist
 dist-ssr
 *.local

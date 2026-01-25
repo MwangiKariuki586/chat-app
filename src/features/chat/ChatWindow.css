@@ -151,6 +151,8 @@
     gap: 0.75rem;
     max-width: 70%;
     animation: fadeIn 0.2s ease;
+    position: relative;
+    padding-right: 1.25rem;
 }
 
 @keyframes fadeIn {
@@ -194,6 +196,8 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    min-width: 0;
+    /* Critical for text overflow in flex items */
 }
 
 .message-sender {
@@ -207,6 +211,85 @@
     padding: 0.75rem 1rem;
     border-radius: 1rem;
     background: rgba(255, 255, 255, 0.1);
+    overflow-wrap: anywhere;
+    /* Force word wrap for long strings */
+    word-break: break-word;
+    /* Additional backup for legacy browsers */
+}
+
+.message-status-dot {
+    position: absolute;
+    right: 0;
+    bottom: 2rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.message-status-dot.yellow {
+    background-color: #fbbf24;
+}
+
+.message-status-dot.green {
+    background-color: #22c55e;
+}
+
+.message-status-dot.blue {
+    background-color: #3b82f6;
+}
+
+.message-status-dot.red {
+    background-color: #ef4444;
+}
+
+/* Message Grouping */
+.date-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.date-separator {
+    display: flex;
+    justify-content: center;
+    margin: 1rem 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.date-separator span {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(4px);
+}
+
+.message-text {
+    margin: 0;
+    white-space: pre-wrap;
+    /* Preserve newlines */
+}
+
+.see-more-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin-top: 0.25rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.75rem;
+    cursor: pointer;
+    font-weight: 500;
+    text-decoration: underline;
+    opacity: 0.8;
+}
+
+.see-more-btn:hover {
+    opacity: 1;
 }
 
 .message.own .message-bubble {
@@ -252,4 +335,50 @@
 .no-messages-icon {
     font-size: 3rem;
     opacity: 0.5;
+}
+
+/* Load More Button */
+.load-more-container {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem 0 1rem;
+}
+
+.load-more-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 1rem;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.load-more-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+}
+
+.load-more-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.load-more-btn .loading-spinner-small {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }

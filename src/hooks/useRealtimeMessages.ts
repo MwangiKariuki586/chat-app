@@ -21,6 +21,7 @@ export function useRealtimeMessages({
 }: UseRealtimeMessagesOptions) {
     const channelRef = useRef<RealtimeChannel | null>(null);
     const addMessage = useMessageStore((state) => state.addMessage);
+    const addReceipt = useMessageStore((state) => state.addReceipt);
 
     // Store onStatusChange in a ref to avoid it being a dependency
     const onStatusChangeRef = useRef(onStatusChange);
@@ -32,7 +33,8 @@ export function useRealtimeMessages({
             .from('messages')
             .select(`
         *,
-        sender:users!sender_id(id, name, email, avatar_url)
+        sender:users!sender_id(id, name, email, avatar_url),
+        receipts:message_receipts(*)
       `)
             .eq('id', payload.new.id)
             .single();
@@ -46,6 +48,10 @@ export function useRealtimeMessages({
             addMessage(message);
         }
     }, [addMessage]);
+
+    const handleNewReceipt = useCallback((payload: { new: any }) => {
+        addReceipt(payload.new);
+    }, [addReceipt]);
 
     useEffect(() => {
         // Don't subscribe without a valid conversation ID
@@ -63,9 +69,9 @@ export function useRealtimeMessages({
         onStatusChangeRef.current?.('connecting');
 
         // Create a unique channel name for this conversation
-        const channelName = `messages:${conversationId}:${Date.now()}`;
+        const channelName = `realtime:${conversationId}:${Date.now()}`;
 
-        // Subscribe to postgres_changes for this conversation
+        // Subscribe to messages and receipts
         const channel = supabase
             .channel(channelName)
             .on(
@@ -77,6 +83,15 @@ export function useRealtimeMessages({
                     filter: `conversation_id=eq.${conversationId}`,
                 },
                 handleNewMessage
+            )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'message_receipts',
+                },
+                handleNewReceipt
             )
             .subscribe((status, err) => {
                 switch (status) {
@@ -109,7 +124,7 @@ export function useRealtimeMessages({
                 channelRef.current = null;
             }
         };
-    }, [conversationId, handleNewMessage]);  // Removed onStatusChange from dependencies
+    }, [conversationId, handleNewMessage, handleNewReceipt]);  // Removed onStatusChange from dependencies
 
     // Return function to manually reconnect if needed
     const reconnect = useCallback(() => {

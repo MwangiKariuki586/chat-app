@@ -1,7 +1,8 @@
-import { useEffect, useRef, memo } from 'react';
+import { useEffect, useRef, memo, useState } from 'react';
 import { useMessageStore, useConversationStore, usePresenceStore } from '@/stores';
 import { useRealtimeMessages, useConnectionState, getConnectionStatusDisplay } from '@/hooks';
 import { useAuth } from '@/features/auth';
+import { MessagesSkeleton } from '@/components/LoadingSkeleton';
 import { MessageInput } from './MessageInput';
 import { ArrowLeft, MoreVertical } from 'lucide-react';
 import type { Message } from '@/types';
@@ -21,8 +22,23 @@ const MessageBubble = memo(function MessageBubble({
   message: Message; 
   isOwn: boolean;
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const isOptimistic = message.id.startsWith('temp-');
+  const isRead = message.receipts?.some(r => r.read_at && r.user_id !== message.sender_id);
+  const isFailed = (message as any).failed;
   
+  // Truncate logic
+  const MAX_CHARS = 300;
+  const isLongMessage = message.content.length > MAX_CHARS || (message.content.match(/\n/g) || []).length > 4;
+  const shouldTruncate = isLongMessage && !isExpanded;
+
+  const getStatusColor = () => {
+    if (isFailed) return 'red';
+    if (isOptimistic) return 'yellow';
+    if (isRead) return 'blue';
+    return 'green';
+  };
+
   return (
     <div className={`message ${isOwn ? 'own' : 'other'} ${isOptimistic ? 'sending' : ''}`}>
       {!isOwn && (
@@ -34,9 +50,23 @@ const MessageBubble = memo(function MessageBubble({
         {!isOwn && (
           <span className="message-sender">{message.sender?.name || 'Unknown'}</span>
         )}
-        <div className="message-bubble">
-          <p>{message.content}</p>
+        <div className={`message-bubble ${shouldTruncate ? 'truncated' : ''}`}>
+          <p className="message-text">
+            {shouldTruncate ? `${message.content.slice(0, MAX_CHARS)}...` : message.content}
+          </p>
+          {isLongMessage && (
+            <button 
+              onClick={() => setIsExpanded(!isExpanded)} 
+              className="see-more-btn"
+            >
+              {isExpanded ? 'See less' : 'See more'}
+            </button>
+          )}
         </div>
+        {isOwn && (
+          <div className={`message-status-dot ${getStatusColor()}`} 
+               title={getStatusColor().toUpperCase()} />
+        )}
         <span className="message-time">
           {isOptimistic ? 'Sending...' : formatTime(message.created_at)}
         </span>
@@ -50,25 +80,115 @@ function formatTime(dateString: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// Helper to group messages by date
+function groupMessagesByDate(messages: Message[]) {
+  const groups: Record<string, Message[]> = {};
+  
+  messages.forEach(message => {
+    const date = new Date(message.created_at);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    let dateKey = date.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
+    
+    if (date.toDateString() === today.toDateString()) {
+      dateKey = 'Today';
+    } else if (date.toDateString() === yesterday.toDateString()) {
+      dateKey = 'Yesterday';
+    }
+    
+    if (!groups[dateKey]) {
+      groups[dateKey] = [];
+    }
+    groups[dateKey].push(message);
+  });
+  
+  return groups;
+}
+
 export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: ChatWindowProps) {
   const { user } = useAuth();
+  // ... rest of component
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null); // To track scroll position
   
   // Get messages from store
   const { 
     messagesByConversation, 
     isLoading, 
+    isLoadingMore,
+    paginationState,
     fetchMessages,
-    sendMessage 
+    fetchMoreMessages,
+    sendMessage,
+    markAsRead
   } = useMessageStore();
   
   const messages = messagesByConversation[conversationId] || [];
+  const pagination = paginationState[conversationId];
+
+  // Mark as read when conversation opens or messages change
+  useEffect(() => {
+    if (conversationId && messages.length > 0) {
+      markAsRead(conversationId);
+    }
+  }, [conversationId, messages.length, markAsRead]);
+
+  // Infinite Scroll Logic
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (first.isIntersecting && pagination?.hasMore && !isLoadingMore) {
+          // Save scroll height before fetch
+          if (messagesContainerRef.current) {
+            const container = messagesContainerRef.current;
+            const scrollHeight = container.scrollHeight;
+            const scrollTop = container.scrollTop;
+            
+            fetchMoreMessages(conversationId).then(() => {
+               // Restore scroll position after fetch so user doesn't jump
+               // We need to wait for DOM update (messages to render)
+               // This is tricky in React without useLayoutEffect or ResizeObserver, 
+               // but a quick approach is capturing the diff.
+               // Actually, ChatWindow might re-render, so let's use a simpler auto-scroll strategy or layout effect if needed.
+               // For now, let's just trigger the fetch.
+               // To fix jump: The user is at the top. New items added at top. 
+               // Browser default behavior keeps scroll position at 0 (top), showing NEW items.
+               // We want to scroll DOWN by the height difference.
+               requestAnimationFrame(() => {
+                   if (messagesContainerRef.current) {
+                       const newScrollHeight = messagesContainerRef.current.scrollHeight;
+                       messagesContainerRef.current.scrollTop = newScrollHeight - scrollHeight + scrollTop;
+                   }
+               });
+            });
+          }
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    const currentLoader = loadMoreRef.current;
+    if (currentLoader) {
+      observer.observe(currentLoader);
+    }
+
+    return () => {
+      if (currentLoader) {
+        observer.unobserve(currentLoader);
+      }
+    };
+  }, [conversationId, pagination?.hasMore, isLoadingMore, fetchMoreMessages]);
 
   // Connection state management
   const { 
     status, 
     handleStatusChange, 
-    isConnected 
+    //isConnected 
   } = useConnectionState({
     maxRetries: 3,
     onMaxRetriesReached: () => {
@@ -85,9 +205,11 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
   // Fetch initial messages
   useEffect(() => {
     if (conversationId) {
-      fetchMessages(conversationId);
+      fetchMessages(conversationId).then(() => {
+        markAsRead(conversationId);
+      });
     }
-  }, [conversationId, fetchMessages]);
+  }, [conversationId, fetchMessages, markAsRead]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -177,12 +299,9 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
       )}
 
       {/* Messages area */}
-      <div className="messages-container">
+      <div className="messages-container" ref={messagesContainerRef}>
         {isLoading ? (
-          <div className="loading-messages">
-            <div className="loading-spinner-small"></div>
-            <span>Loading messages...</span>
-          </div>
+          <MessagesSkeleton />
         ) : messages.length === 0 ? (
           <div className="no-messages">
             <span className="no-messages-icon">💬</span>
@@ -190,12 +309,31 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
           </div>
         ) : (
           <div className="messages-list">
-            {messages.map((message) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                isOwn={message.sender_id === user?.id}
-              />
+            {/* Infinite Scroll trigger */}
+            {/* Infinite Scroll trigger area */}
+            <div ref={loadMoreRef} className="load-more-trigger" style={{ minHeight: '20px' }}>
+               {isLoadingMore && (
+                 <div className="infinite-scroll-skeletons">
+                    <div className="skeleton-date-header" style={{ width: '100px', height: '24px', margin: '1rem auto', borderRadius: '12px', background: 'rgba(255,255,255,0.1)' }} />
+                    <MessagesSkeleton count={3} />
+                 </div>
+               )}
+            </div>
+            
+            {/* Group messages by date */}
+            {Object.entries(groupMessagesByDate(messages)).map(([date, msgs]) => (
+              <div key={date} className="date-group">
+                <div className="date-separator">
+                  <span>{date}</span>
+                </div>
+                {msgs.map((message) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    isOwn={message.sender_id === user?.id}
+                  />
+                ))}
+              </div>
             ))}
             <div ref={messagesEndRef} />
           </div>
@@ -206,8 +344,8 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
       <MessageInput 
         key={conversationId} // Force re-mount to trigger autoFocus on conversation change
         onSendMessage={handleSendMessage} 
-        disabled={!isConnected}
         autoFocus
+        userId={user?.id}
       />
     </div>
   );

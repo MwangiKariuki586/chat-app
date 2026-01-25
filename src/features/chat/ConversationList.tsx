@@ -3,6 +3,7 @@ import { useConversationStore } from '@/stores';
 import { useAuth } from '@/features/auth';
 import { useRealtimeConversations } from '@/hooks';
 import { useToast } from '@/components/Toast';
+import { ConversationListSkeleton } from '@/components/LoadingSkeleton';
 import { supabase } from '@/lib/supabase';
 import { Trash2 } from 'lucide-react';
 import type { User } from '@/types';
@@ -233,10 +234,7 @@ export function ConversationList({
       )}
 
       {isLoading ? (
-        <div className="loading-state">
-          <div className="loading-spinner-small"></div>
-          <span>Loading...</span>
-        </div>
+        <ConversationListSkeleton />
       ) : conversations.length === 0 ? (
         <div className="empty-state">
           <span className="empty-icon">💬</span>
