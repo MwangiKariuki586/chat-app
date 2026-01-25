@@ -43,10 +43,10 @@ export function ConversationListSkeleton() {
   );
 }
 
-export function MessagesSkeleton() {
+export function MessagesSkeleton({ count = 6 }: { count?: number }) {
   return (
     <div className="messages-skeleton">
-      {[1, 2, 3, 4,5,6].map((i) => (
+      {Array.from({ length: count }).map((_, i) => (
         <div key={i} className={`message-skeleton ${i % 2 === 0 ? 'own' : 'other'}`}>
           {i % 2 !== 0 && <Skeleton variant="circular" width={32} height={32} />}
           <div className="message-content-skeleton">

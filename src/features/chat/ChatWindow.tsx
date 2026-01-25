@@ -112,6 +112,8 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
   // ... rest of component
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null); // To track scroll position
   
   // Get messages from store
   const { 
@@ -134,6 +136,53 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
       markAsRead(conversationId);
     }
   }, [conversationId, messages.length, markAsRead]);
+
+  // Infinite Scroll Logic
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (first.isIntersecting && pagination?.hasMore && !isLoadingMore) {
+          // Save scroll height before fetch
+          if (messagesContainerRef.current) {
+            const container = messagesContainerRef.current;
+            const scrollHeight = container.scrollHeight;
+            const scrollTop = container.scrollTop;
+            
+            fetchMoreMessages(conversationId).then(() => {
+               // Restore scroll position after fetch so user doesn't jump
+               // We need to wait for DOM update (messages to render)
+               // This is tricky in React without useLayoutEffect or ResizeObserver, 
+               // but a quick approach is capturing the diff.
+               // Actually, ChatWindow might re-render, so let's use a simpler auto-scroll strategy or layout effect if needed.
+               // For now, let's just trigger the fetch.
+               // To fix jump: The user is at the top. New items added at top. 
+               // Browser default behavior keeps scroll position at 0 (top), showing NEW items.
+               // We want to scroll DOWN by the height difference.
+               requestAnimationFrame(() => {
+                   if (messagesContainerRef.current) {
+                       const newScrollHeight = messagesContainerRef.current.scrollHeight;
+                       messagesContainerRef.current.scrollTop = newScrollHeight - scrollHeight + scrollTop;
+                   }
+               });
+            });
+          }
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    const currentLoader = loadMoreRef.current;
+    if (currentLoader) {
+      observer.observe(currentLoader);
+    }
+
+    return () => {
+      if (currentLoader) {
+        observer.unobserve(currentLoader);
+      }
+    };
+  }, [conversationId, pagination?.hasMore, isLoadingMore, fetchMoreMessages]);
 
   // Connection state management
   const { 
@@ -250,7 +299,7 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
       )}
 
       {/* Messages area */}
-      <div className="messages-container">
+      <div className="messages-container" ref={messagesContainerRef}>
         {isLoading ? (
           <MessagesSkeleton />
         ) : messages.length === 0 ? (
@@ -260,25 +309,16 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
           </div>
         ) : (
           <div className="messages-list">
-            {/* Load more button at top */}
-            {pagination?.hasMore && (
-              <div className="load-more-container">
-                <button 
-                  className="load-more-btn"
-                  onClick={() => fetchMoreMessages(conversationId)}
-                  disabled={isLoadingMore}
-                >
-                  {isLoadingMore ? (
-                    <>
-                      <span className="loading-spinner-small"></span>
-                      Loading...
-                    </>
-                  ) : (
-                    'Load older messages'
-                  )}
-                </button>
-              </div>
-            )}
+            {/* Infinite Scroll trigger */}
+            {/* Infinite Scroll trigger area */}
+            <div ref={loadMoreRef} className="load-more-trigger" style={{ minHeight: '20px' }}>
+               {isLoadingMore && (
+                 <div className="infinite-scroll-skeletons">
+                    <div className="skeleton-date-header" style={{ width: '100px', height: '24px', margin: '1rem auto', borderRadius: '12px', background: 'rgba(255,255,255,0.1)' }} />
+                    <MessagesSkeleton count={3} />
+                 </div>
+               )}
+            </div>
             
             {/* Group messages by date */}
             {Object.entries(groupMessagesByDate(messages)).map(([date, msgs]) => (

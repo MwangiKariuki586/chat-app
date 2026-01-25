@@ -225,7 +225,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     fetchMessages: async (conversationId) => {
         set({ isLoading: true });
 
-        const PAGE_SIZE = 50;
+        const PAGE_SIZE = 25;
 
         try {
             const { data: { user } } = await supabase.auth.getUser();
@@ -272,6 +272,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             const oldestMessage = messages[0];
 
             console.log('📧 Fetched messages count:', messages.length, 'hasMore:', hasMore);
+            console.log('📧 All fetched messages:', messages);
 
             set((state) => ({
                 isLoading: false,
@@ -305,7 +306,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
         set({ isLoadingMore: true });
 
-        const PAGE_SIZE = 50;
+        const PAGE_SIZE = 25;
 
         try {
             const { data: { user } } = await supabase.auth.getUser();
@@ -355,6 +356,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             const newOldestMessage = olderMessages[0];
 
             console.log('📧 Fetched more messages:', olderMessages.length, 'hasMore:', hasMore);
+            console.log('📧 All fetched MORE messages:', olderMessages);
 
             set((state) => ({
                 isLoadingMore: false,

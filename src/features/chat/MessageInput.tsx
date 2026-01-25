@@ -32,13 +32,27 @@ export function MessageInput({ onSendMessage, disabled, autoFocus = true, userId
   // Focus the textarea when autoFocus is true or component mounts
   useEffect(() => {
     if (autoFocus && !disabled && textareaRef.current) {
-      // Small delay to ensure the UI is ready
+      // Check if already focused to avoid fighting
+      if (document.activeElement === textareaRef.current) return;
+
+      // Small delay to ensure the UI is ready and prevent layout shift issues
       const timer = setTimeout(() => {
         textareaRef.current?.focus();
-      }, 100);
+      }, 50);
       return () => clearTimeout(timer);
     }
   }, [autoFocus, disabled]);
+
+  // Keep focus on window refocus
+  useEffect(() => {
+      const handleFocus = () => {
+          if (!disabled && autoFocus) {
+              textareaRef.current?.focus();
+          }
+      };
+      window.addEventListener('focus', handleFocus);
+      return () => window.removeEventListener('focus', handleFocus);
+  }, [disabled, autoFocus]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -113,7 +127,7 @@ export function MessageInput({ onSendMessage, disabled, autoFocus = true, userId
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder={!rateLimitAllowed ? `Rate limited (${cooldownSeconds}s)...` : disabled ? 'Connecting...' : 'Type a message...'}
-          disabled={disabled || isSending || !rateLimitAllowed}
+          disabled={disabled || !rateLimitAllowed} /* Don't disable on isSending to allow rapid typing */
           rows={1}
           className={`message-textarea ${error ? 'has-error' : ''}`}
           maxLength={MAX_MESSAGE_LENGTH}
