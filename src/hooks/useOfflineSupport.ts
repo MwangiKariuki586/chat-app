@@ -16,7 +16,7 @@ interface UseOfflineSupportResult {
 export function useOfflineSupport(): UseOfflineSupportResult {
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     const [pendingMessageCount, setPendingMessageCount] = useState(0);
-    const { confirmMessage, removeMessage } = useMessageStore();
+    const { confirmMessage } = useMessageStore();
     const { showToast } = useToast();
 
     // Update online status and poll for queue changes

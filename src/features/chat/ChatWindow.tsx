@@ -188,7 +188,7 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
   const { 
     status, 
     handleStatusChange, 
-    isConnected 
+    //isConnected 
   } = useConnectionState({
     maxRetries: 3,
     onMaxRetriesReached: () => {
