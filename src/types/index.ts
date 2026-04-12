@@ -38,6 +38,9 @@ export interface Message {
     sender_id: string;
     content: string;
     created_at: string;
+    client_temp_id?: string | null;
+    client_status?: MessageClientStatus;
+    error_message?: string | null;
     // Joined data
     sender?: User;
     receipts?: MessageReceipt[];
@@ -64,9 +67,31 @@ export interface RealtimePayload<T> {
     table: string;
 }
 
+export type MessageClientStatus = 'pending' | 'confirmed' | 'failed';
+
+export type ResourceStatus = 'idle' | 'loading' | 'ready' | 'paginating' | 'syncing' | 'stale' | 'error';
+
+export interface ConversationLoadState {
+    status: ResourceStatus;
+    error: string | null;
+    cursor: string | null;
+    lastSyncedAt: string | null;
+    inFlightRequestId: string | null;
+}
+
 // Connection states for realtime
 export type ConnectionState =
     | 'connecting'
     | 'connected'
     | 'disconnected'
-    | 'error';
+    | 'error'
+    | 'retrying'
+    | 'degraded';
+
+export type AuthStatus = 'booting' | 'authenticated' | 'anonymous' | 'error';
+
+export type ChatRealtimeEvent =
+    | { type: 'message_inserted'; message: Message }
+    | { type: 'receipt_upserted'; receipt: MessageReceipt }
+    | { type: 'conversation_upserted'; conversation: Conversation }
+    | { type: 'presence_synced'; userIds: string[] };

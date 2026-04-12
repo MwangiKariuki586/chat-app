@@ -1,87 +1,78 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-    processOfflineQueue,
-    hasOfflineMessages,
-    getOfflineMessageCount
-} from '@/lib/offlineQueue';
-import { useMessageStore } from '@/stores';
-import { useToast } from '@/components/Toast';
+import { offlineQueueStore } from '@/services/offlineQueueStore';
+import { offlineQueueCoordinator } from '@/services/offlineQueueCoordinator';
 
 interface UseOfflineSupportResult {
     isOnline: boolean;
     pendingMessageCount: number;
+    isSyncing: boolean;
     syncPendingMessages: () => Promise<void>;
 }
 
 export function useOfflineSupport(): UseOfflineSupportResult {
-    const [isOnline, setIsOnline] = useState(navigator.onLine);
-    const [pendingMessageCount, setPendingMessageCount] = useState(0);
-    const { confirmMessage } = useMessageStore();
-    const { showToast } = useToast();
+    const [isOnline, setIsOnline] = useState(offlineQueueStore.isOnline());
+    const [pendingMessageCount, setPendingMessageCount] = useState(offlineQueueStore.getItems().length);
+    const [isSyncing, setIsSyncing] = useState(offlineQueueCoordinator.isSyncing());
 
-    // Update online status and poll for queue changes
     useEffect(() => {
+        const unsubscribeQueue = offlineQueueStore.subscribe((items) => {
+            setPendingMessageCount(items.length);
+            if (offlineQueueStore.isOnline() && items.some((item) => item.status === 'pending')) {
+                offlineQueueCoordinator.requestSyncSoon(250);
+            }
+        });
+        const unsubscribeSync = offlineQueueCoordinator.subscribe((syncing) => {
+            setIsSyncing(syncing);
+        });
+
         const handleOnline = () => {
-            console.log('🌐 Back online!');
             setIsOnline(true);
+            void offlineQueueCoordinator.sync();
         };
 
         const handleOffline = () => {
-            console.log('🌐 Gone offline!');
             setIsOnline(false);
+        };
+
+        const handleFocus = () => {
+            if (offlineQueueStore.isOnline() && offlineQueueStore.getItems().some((item) => item.status === 'pending')) {
+                void offlineQueueCoordinator.sync();
+            }
+        };
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                handleFocus();
+            }
         };
 
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
+        window.addEventListener('focus', handleFocus);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
 
-        // Check initial queue count
-        setPendingMessageCount(getOfflineMessageCount());
-
-        // Poll for queue changes every second (for when messages are added while offline)
-        const pollInterval = setInterval(() => {
-            const count = getOfflineMessageCount();
-            setPendingMessageCount(count);
-        }, 1000);
+        if (offlineQueueStore.isOnline() && offlineQueueStore.getItems().length > 0) {
+            void offlineQueueCoordinator.sync();
+        }
 
         return () => {
+            unsubscribeQueue();
+            unsubscribeSync();
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
-            clearInterval(pollInterval);
+            window.removeEventListener('focus', handleFocus);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, []);
 
-    const handleSyncSuccess = useCallback((messageId: string, data: any) => {
-        console.log(`✅ Synced message: ${messageId}`);
-        confirmMessage(messageId, data);
-        setPendingMessageCount((prev) => Math.max(0, prev - 1));
-    }, [confirmMessage]);
-
-    const handleSyncFailure = useCallback((messageId: string, error: Error) => {
-        console.error(`❌ Failed to sync message: ${messageId}`, error);
-        if (error.message === 'Max retries exceeded') {
-            showToast('A message failed to send after multiple attempts and was removed.', 'error');
-            // Optimistically remove the failed message from UI as well or mark it failed
-            // For now, we'll just remove it to keep the UI clean
-            // removeMessage(unknown_conversation_id, messageId); 
-            // Note: We'd need the move conversationId into the failure callback for perfect cleanup
-        }
-    }, [showToast]);
-
-    // Auto-sync when coming back online
-    useEffect(() => {
-        if (isOnline && hasOfflineMessages()) {
-            console.log('🌐 Online with pending messages, syncing...');
-            processOfflineQueue(handleSyncSuccess, handleSyncFailure);
-        }
-    }, [isOnline, handleSyncSuccess, handleSyncFailure]);
-
     const syncPendingMessages = useCallback(async () => {
-        await processOfflineQueue(handleSyncSuccess, handleSyncFailure);
-    }, [handleSyncSuccess, handleSyncFailure]);
+        await offlineQueueCoordinator.sync();
+    }, []);
 
     return {
         isOnline,
         pendingMessageCount,
+        isSyncing,
         syncPendingMessages,
     };
 }
