@@ -43,7 +43,7 @@ export function AuthPage() {
           showSuccess('Account created! Check your email for confirmation.');
         }
       }
-    } catch (err) {
+    } catch {
       setError('An unexpected error occurred');
       showError('An unexpected error occurred');
     } finally {

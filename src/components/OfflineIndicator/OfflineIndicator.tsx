@@ -2,20 +2,22 @@ import { useOfflineSupport } from '@/hooks/useOfflineSupport';
 import './OfflineIndicator.css';
 
 export function OfflineIndicator() {
-  const { isOnline, pendingMessageCount } = useOfflineSupport();
+  const { isOnline, pendingMessageCount, isSyncing } = useOfflineSupport();
 
-  // Don't show anything if online and no pending messages
-  if (isOnline && pendingMessageCount === 0) {
+  const shouldShowOffline = !isOnline;
+  const shouldShowSyncing = isOnline && isSyncing && pendingMessageCount > 0;
+
+  if (!shouldShowOffline && !shouldShowSyncing) {
     return null;
   }
 
   return (
-    <div className={`offline-indicator ${isOnline ? 'syncing' : 'offline'}`}>
+    <div className={`offline-indicator ${shouldShowSyncing ? 'syncing' : 'offline'}`}>
       <span className="offline-icon">
-        {isOnline ? '🔄' : '📴'}
+        {shouldShowSyncing ? 'Sync' : 'Offline'}
       </span>
       <span className="offline-text">
-        {isOnline 
+        {shouldShowSyncing
           ? `Syncing ${pendingMessageCount} message${pendingMessageCount > 1 ? 's' : ''}...`
           : 'You are offline. Messages will be sent when you reconnect.'
         }

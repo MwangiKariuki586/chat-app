@@ -1,8 +1,7 @@
-import { useEffect, useRef, useCallback } from 'react';
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
-import { useMessageStore } from '@/stores/chatStore';
-import type { Message } from '@/types';
+import { useEffect, useEffectEvent } from 'react';
+import { realtimeManager } from '@/services/realtimeManager';
+import { receiveRealtimeMessage, receiveRealtimeReceipt, syncConversationSinceLastKnown } from '@/services/chatController';
+import { useMessageStore } from '@/stores';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -11,130 +10,39 @@ interface UseRealtimeMessagesOptions {
     onStatusChange?: (status: ConnectionStatus) => void;
 }
 
-/**
- * Hook to subscribe to realtime messages for a conversation.
- * Handles proper lifecycle management to prevent CHANNEL_ERROR.
- */
-export function useRealtimeMessages({
-    conversationId,
-    onStatusChange
-}: UseRealtimeMessagesOptions) {
-    const channelRef = useRef<RealtimeChannel | null>(null);
-    const addMessage = useMessageStore((state) => state.addMessage);
-    const addReceipt = useMessageStore((state) => state.addReceipt);
+const mapStatus = (status: 'connecting' | 'connected' | 'disconnected' | 'retrying' | 'degraded' | 'error'): ConnectionStatus =>
+    status === 'retrying' ? 'connecting' : status === 'degraded' ? 'error' : status;
 
-    // Store onStatusChange in a ref to avoid it being a dependency
-    const onStatusChangeRef = useRef(onStatusChange);
-    onStatusChangeRef.current = onStatusChange;
-
-    const handleNewMessage = useCallback(async (payload: { new: Message }) => {
-        // Fetch the complete message with sender data
-        const { data: message, error } = await supabase
-            .from('messages')
-            .select(`
-        *,
-        sender:users!sender_id(id, name, email, avatar_url),
-        receipts:message_receipts(*)
-      `)
-            .eq('id', payload.new.id)
-            .single();
-
-        if (error) {
-            console.error('Error fetching new message:', error);
-            return;
-        }
-
-        if (message) {
-            addMessage(message);
-        }
-    }, [addMessage]);
-
-    const handleNewReceipt = useCallback((payload: { new: any }) => {
-        addReceipt(payload.new);
-    }, [addReceipt]);
+export function useRealtimeMessages({ conversationId, onStatusChange }: UseRealtimeMessagesOptions) {
+    const emitStatus = useEffectEvent((status: ConnectionStatus) => {
+        onStatusChange?.(status);
+    });
 
     useEffect(() => {
-        // Don't subscribe without a valid conversation ID
         if (!conversationId) {
-            onStatusChangeRef.current?.('disconnected');
+            emitStatus('disconnected');
             return;
         }
 
-        // Cleanup existing channel before creating new one
-        if (channelRef.current) {
-            supabase.removeChannel(channelRef.current);
-            channelRef.current = null;
-        }
+        useMessageStore.getState().setConversationConnection(conversationId, 'connecting');
 
-        onStatusChangeRef.current?.('connecting');
+        return realtimeManager.subscribeToConversationMessages({
+            conversationId,
+            onMessage: (message) => {
+                receiveRealtimeMessage(message);
+            },
+            onReceipt: (receipt) => {
+                receiveRealtimeReceipt(receipt);
+            },
+            onReconnect: async () => {
+                await syncConversationSinceLastKnown(conversationId);
+            },
+            onStatus: (status) => {
+                useMessageStore.getState().setConversationConnection(conversationId, status);
+                emitStatus(mapStatus(status));
+            },
+        });
+    }, [conversationId]);
 
-        // Create a unique channel name for this conversation
-        const channelName = `realtime:${conversationId}:${Date.now()}`;
-
-        // Subscribe to messages and receipts
-        const channel = supabase
-            .channel(channelName)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'messages',
-                    filter: `conversation_id=eq.${conversationId}`,
-                },
-                handleNewMessage
-            )
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'message_receipts',
-                },
-                handleNewReceipt
-            )
-            .subscribe((status, err) => {
-                switch (status) {
-                    case 'SUBSCRIBED':
-                        console.log(`✅ Realtime connected for conversation ${conversationId}`);
-                        onStatusChangeRef.current?.('connected');
-                        break;
-                    case 'CHANNEL_ERROR':
-                        console.error('❌ Channel error:', err);
-                        onStatusChangeRef.current?.('error');
-                        break;
-                    case 'TIMED_OUT':
-                        console.warn('⏰ Channel timed out');
-                        onStatusChangeRef.current?.('error');
-                        break;
-                    case 'CLOSED':
-                        console.log('🔌 Channel closed');
-                        onStatusChangeRef.current?.('disconnected');
-                        break;
-                }
-            });
-
-        channelRef.current = channel;
-
-        // CRITICAL: Cleanup on unmount or conversation change
-        return () => {
-            if (channelRef.current) {
-                console.log(`🧹 Cleaning up channel for conversation ${conversationId}`);
-                supabase.removeChannel(channelRef.current);
-                channelRef.current = null;
-            }
-        };
-    }, [conversationId, handleNewMessage, handleNewReceipt]);  // Removed onStatusChange from dependencies
-
-    // Return function to manually reconnect if needed
-    const reconnect = useCallback(() => {
-        if (channelRef.current) {
-            supabase.removeChannel(channelRef.current);
-            channelRef.current = null;
-        }
-        // Trigger re-subscription by creating a new effect cycle
-        // This is handled automatically by React's useEffect cleanup
-    }, []);
-
-    return { reconnect };
+    return {};
 }

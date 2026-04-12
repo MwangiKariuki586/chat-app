@@ -1,11 +1,12 @@
-import { useEffect, useRef, memo, useState } from 'react';
+import { useEffect, useMemo, useRef, memo, useState } from 'react';
 import { useMessageStore, useConversationStore, usePresenceStore } from '@/stores';
 import { useRealtimeMessages, useConnectionState, getConnectionStatusDisplay } from '@/hooks';
 import { useAuth } from '@/features/auth';
 import { MessagesSkeleton } from '@/components/LoadingSkeleton';
 import { MessageInput } from './MessageInput';
+import { loadMessages, markConversationRead, sendMessage as sendChatMessage } from '@/services/chatController';
 import { ArrowLeft, MoreVertical } from 'lucide-react';
-import type { Message } from '@/types';
+import type { ConversationParticipant, Message } from '@/types';
 import './ChatWindow.css';
 
 interface ChatWindowProps {
@@ -23,9 +24,9 @@ const MessageBubble = memo(function MessageBubble({
   isOwn: boolean;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const isOptimistic = message.id.startsWith('temp-');
+  const isOptimistic = message.client_status === 'pending' || message.id.startsWith('temp-');
   const isRead = message.receipts?.some(r => r.read_at && r.user_id !== message.sender_id);
-  const isFailed = (message as any).failed;
+  const isFailed = message.client_status === 'failed';
   
   // Truncate logic
   const MAX_CHARS = 300;
@@ -118,47 +119,43 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
   // Get messages from store
   const { 
     messagesByConversation, 
-    isLoading, 
-    isLoadingMore,
-    paginationState,
-    fetchMessages,
-    fetchMoreMessages,
-    sendMessage,
-    markAsRead
+    loadStateByConversation,
   } = useMessageStore();
   
-  const messages = messagesByConversation[conversationId] || [];
-  const pagination = paginationState[conversationId];
+  const messages = useMemo(
+    () => messagesByConversation[conversationId] ?? [],
+    [conversationId, messagesByConversation],
+  );
+  const oldestMessageCreatedAt = messages[0]?.created_at || null;
+  const loadState = loadStateByConversation[conversationId];
+  const isLoading = messages.length === 0 && (!loadState || loadState.status === 'loading' || loadState.status === 'idle');
+  const isLoadingMore = loadState?.status === 'paginating';
+  const hasMore = Boolean(loadState?.cursor);
 
   // Mark as read when conversation opens or messages change
   useEffect(() => {
     if (conversationId && messages.length > 0) {
-      markAsRead(conversationId);
+      void markConversationRead(conversationId);
     }
-  }, [conversationId, messages.length, markAsRead]);
+  }, [conversationId, messages.length]);
 
   // Infinite Scroll Logic
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         const first = entries[0];
-        if (first.isIntersecting && pagination?.hasMore && !isLoadingMore) {
+        if (first.isIntersecting && hasMore && !isLoadingMore) {
           // Save scroll height before fetch
           if (messagesContainerRef.current) {
             const container = messagesContainerRef.current;
             const scrollHeight = container.scrollHeight;
             const scrollTop = container.scrollTop;
             
-            fetchMoreMessages(conversationId).then(() => {
+            loadMessages(conversationId, {
+              append: true,
+              before: oldestMessageCreatedAt,
+            }).then(() => {
                // Restore scroll position after fetch so user doesn't jump
-               // We need to wait for DOM update (messages to render)
-               // This is tricky in React without useLayoutEffect or ResizeObserver, 
-               // but a quick approach is capturing the diff.
-               // Actually, ChatWindow might re-render, so let's use a simpler auto-scroll strategy or layout effect if needed.
-               // For now, let's just trigger the fetch.
-               // To fix jump: The user is at the top. New items added at top. 
-               // Browser default behavior keeps scroll position at 0 (top), showing NEW items.
-               // We want to scroll DOWN by the height difference.
                requestAnimationFrame(() => {
                    if (messagesContainerRef.current) {
                        const newScrollHeight = messagesContainerRef.current.scrollHeight;
@@ -182,19 +179,13 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
         observer.unobserve(currentLoader);
       }
     };
-  }, [conversationId, pagination?.hasMore, isLoadingMore, fetchMoreMessages]);
+  }, [conversationId, hasMore, isLoadingMore, oldestMessageCreatedAt]);
 
   // Connection state management
   const { 
     status, 
-    handleStatusChange, 
-    //isConnected 
-  } = useConnectionState({
-    maxRetries: 3,
-    onMaxRetriesReached: () => {
-      console.error('Max retries reached, please refresh the page');
-    },
-  });
+    handleStatusChange,
+  } = useConnectionState();
 
   // Subscribe to realtime messages
   useRealtimeMessages({
@@ -205,11 +196,11 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
   // Fetch initial messages
   useEffect(() => {
     if (conversationId) {
-      fetchMessages(conversationId).then(() => {
-        markAsRead(conversationId);
+      loadMessages(conversationId).then(() => {
+        void markConversationRead(conversationId);
       });
     }
-  }, [conversationId, fetchMessages, markAsRead]);
+  }, [conversationId]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -217,7 +208,7 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
   }, [messages]);
 
   const handleSendMessage = async (content: string) => {
-    const { error, newConversationId } = await sendMessage(conversationId, content);
+    const { error, newConversationId } = await sendChatMessage(conversationId, content);
     if (error) {
       console.error('Failed to send message:', error);
     } else if (newConversationId && newConversationId !== conversationId) {
@@ -233,7 +224,7 @@ export function ChatWindow({ conversationId, onBack, onConversationIdChanged }: 
    // Presence logic
   const onlineUsers = usePresenceStore((state) => state.onlineUsers);
   const otherParticipant = conversation?.participants?.find(
-      (p: any) => p.user_id !== user?.id
+      (p: ConversationParticipant) => p.user_id !== user?.id
   );
   
   // Check if the other user is online

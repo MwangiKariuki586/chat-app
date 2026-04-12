@@ -8,8 +8,8 @@ import path from 'path';
  */
 // Load .env.e2e if it exists, otherwise fall back to .env
 // We definitely want to override any existing process.env vars if they are set in these files for testing
-const e2eEnv = dotenv.config({ path: path.resolve(process.cwd(), '.env.e2e') });
-const envEnv = dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env.e2e') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 /**
  * Playwright configuration for Chat App E2E tests

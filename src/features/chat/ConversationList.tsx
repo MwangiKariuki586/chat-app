@@ -4,7 +4,8 @@ import { useAuth } from '@/features/auth';
 import { useRealtimeConversations } from '@/hooks';
 import { useToast } from '@/components/Toast';
 import { ConversationListSkeleton } from '@/components/LoadingSkeleton';
-import { supabase } from '@/lib/supabase';
+import { chatRepository } from '@/services/chatRepository';
+import { beginDirectConversationByUserId, leaveConversation, loadConversations } from '@/services/chatController';
 import { Trash2 } from 'lucide-react';
 import type { User } from '@/types';
 import './ConversationList.css';
@@ -21,11 +22,8 @@ export function ConversationList({
   const { user } = useAuth();
   const { 
     conversations, 
-    isLoading, 
+    listState,
     unreadCounts,
-    fetchConversations, 
-    getOrCreateDirectConversation,
-    deleteConversation,
     resetUnreadCount 
   } = useConversationStore();
   const [users, setUsers] = useState<User[]>([]);
@@ -42,9 +40,9 @@ export function ConversationList({
 
   useEffect(() => {
     if (user?.id) {
-      fetchConversations(user.id);
+      void loadConversations();
     }
-  }, [fetchConversations, user?.id]);
+  }, [user?.id]);
 
   // Reset unread count when conversation is selected
   useEffect(() => {
@@ -55,41 +53,21 @@ export function ConversationList({
 
   // Fetch users for new chat dialog
   const fetchUsers = async () => {
-    console.log('fetchUsers called, user:', user?.id);
-    try {
-      // Temporarily fetching ALL users to debug
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .limit(20);
-      
-      console.log('ALL users in database:', data);
-      console.log('Current user ID from auth:', user?.id);
-      console.log('Error:', error);
-      
-      // Filter out current user in JS for now
-      const otherUsers = (data || []).filter(u => u.id !== user?.id);
-      console.log('Other users (after filter):', otherUsers);
-      setUsers(otherUsers);
-    } catch (e) {
-      console.error('fetchUsers exception:', e);
+    const result = await chatRepository.fetchUsers(20);
+    if (result.data) {
+      setUsers(result.data.filter((candidate) => candidate.id !== user?.id));
     }
   };
 
   const handleNewChat = () => {
-    console.log('handleNewChat clicked!');
     setShowNewChat(true);
-    fetchUsers();
+    void fetchUsers();
   };
 
   const handleSelectUser = async (otherUser: User) => {
-    console.log('handleSelectUser called with:', otherUser);
     setShowNewChat(false); // Close modal immediately for better UX
-    
-    // Optimistic UI - Immediately open chat window with temp or real ID
-    const { data, error } = await getOrCreateDirectConversation(otherUser.id);
-    console.log('getOrCreateDirectConversation result - data:', data, 'error:', error);
-    
+
+    const { data } = await beginDirectConversationByUserId(otherUser.id);
     if (data) {
       onSelectConversation(data.id);
     }
@@ -108,7 +86,7 @@ export function ConversationList({
     if (!deleteConfirm) return;
     
     setIsDeleting(true);
-    const { error } = await deleteConversation(deleteConfirm);
+    const { error } = await leaveConversation(deleteConfirm);
     
     if (error) {
       console.error('Failed to leave conversation:', error);
@@ -184,6 +162,8 @@ export function ConversationList({
     u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const isLoading = listState.status === 'loading';
 
   return (
     <aside className="conversation-list">

@@ -1,4 +1,6 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { runtimeIds } from '@/lib/runtime';
 import './Toast.css';
 
 type ToastType = 'success' | 'error' | 'info' | 'warning';
@@ -21,7 +23,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const showToast = useCallback((message: string, type: ToastType = 'info') => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const id = runtimeIds.toastId();
     
     setToasts((prev) => [...prev, { id, message, type }]);
 
